@@ -32,58 +32,48 @@ export default function VoxReader() {
 
     try {
       const res = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
-      const data = await res.json().catch(() => null);
+      const rawText = await res.text();
       
-      // 如果回傳的是 JSON 且包含 error，代表後端報錯了
-      if (data && data.error) {
-        throw new Error(data.debug ? `${data.error} ${data.debug.hint}` : data.error);
+      // 嘗試解析是否為錯誤 JSON
+      try {
+        const jsonData = JSON.parse(rawText);
+        if (jsonData.error) {
+          throw new Error(jsonData.debug ? `${jsonData.error} ${jsonData.debug.hint}` : jsonData.error);
+        }
+      } catch (e: any) {
+        // 如果不是 JSON，則視為 HTML 繼續處理
+        if (e.message.includes('JSON')) { /* ignore */ }
+        else throw e;
       }
 
-      // 如果沒報錯，我們預期得到的是 HTML (但 fetch-doc 現在可能回傳 JSON 或 HTML)
-      // 需要重新 fetch 一次或者調整 API 回傳邏輯。
-      // 為了簡化，我讓 API 始終回傳 JSON 或 HTML。
-      
-      // 重新取得內容
-      const htmlRes = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
-      let rawHtml = await htmlRes.text();
-      
-      // 如果抓到的是 Google 的帶導覽介面 (HTML)，我們需要提取內部真正的內容區塊
       const parser = new DOMParser();
-      const doc = parser.parseFromString(rawHtml, 'text/html');
+      const doc = parser.parseFromString(rawText, 'text/html');
       
-      // 關鍵：嘗試從 Google 的各種容器中尋找核心內容
-      // 1. 嘗試找 id="contents" (Google Docs 常用)
-      // 2. 嘗試找 .doc-content
-      // 3. 否則取 body
-      const mainContent = doc.querySelector('#contents') || doc.querySelector('.doc-content') || doc.body;
+      doc.querySelectorAll('style, script, img, iframe, link, noscript, header, footer').forEach(el => el.remove());
+
+      const mainContent = doc.querySelector('#contents') || doc.querySelector('body');
       
       if (mainContent) {
-        // 徹底清除干擾標籤，但保留基本文字
-        mainContent.querySelectorAll('style, script, img, iframe, link, noscript').forEach(el => el.remove());
-        
-        // 移除所有 inline 樣式以避免 layout 跑掉
-        const all = mainContent.querySelectorAll('*');
-        all.forEach(el => {
+        mainContent.querySelectorAll('*').forEach(el => {
           el.removeAttribute('style');
           el.removeAttribute('class');
           el.removeAttribute('id');
         });
         
-        const bodyContent = mainContent.innerHTML;
+        let bodyContent = mainContent.innerHTML;
+        bodyContent = bodyContent.replace(/<span[^>]*><\/span>/g, '');
+        
         if (!bodyContent || bodyContent.trim().length < 10) throw new Error('EMPTY_CONTENT');
         
         setContent(bodyContent);
       } else {
         throw new Error('NO_CONTENT_FOUND');
       }
-
-      if (!bodyContent || bodyContent.trim().length < 10) {
-        throw new Error('EMPTY_CONTENT');
-      }
       
-      setContent(bodyContent);
       setIsSetup(false);
+      setCurrentPage(0);
     } catch (err: any) {
+
       console.error('Fetch Error:', err);
       let msg = "內容讀取失敗。";
       if (err.message === 'AUTH_REQUIRED') {
