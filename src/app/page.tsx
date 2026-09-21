@@ -36,13 +36,25 @@ export default function VoxReader() {
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
       
-      doc.querySelectorAll('style, script, img').forEach(el => el.remove());
+      // 容錯處理：移除所有可能導致渲染失敗或不必要的干擾元素
+      // 包括 Google Docs 插入的特定元件、圖片、樣式、腳本
+      doc.querySelectorAll('style, script, img, iframe, noscript, canvas').forEach(el => el.remove());
+      
+      // 針對導航或錯誤提示元件進行清理
+      doc.querySelectorAll('[id^="navigation"], [class*="goog-"]').forEach(el => el.remove());
+
       const bodyContent = doc.querySelector('body')?.innerHTML || '';
       
-      setContent(bodyContent);
+      // 如果抓取到的內容為空或異常，提供基本的備註
+      if (!bodyContent || bodyContent.length < 50) {
+        setContent("<p style='color: gray;'>內容讀取異常，可能是文件格式過於複雜。建議確保文件內主要是純文字。</p>");
+      } else {
+        setContent(bodyContent);
+      }
       setIsSetup(false);
     } catch (err) {
-      alert('載入失敗');
+      console.error(err);
+      alert('載入失敗：無法解析該網址的內容。');
     } finally {
       setLoading(false);
     }
