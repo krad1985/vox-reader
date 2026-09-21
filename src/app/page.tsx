@@ -52,7 +52,7 @@ export default function VoxReader() {
     }
   };
 
-  // Calculate Total Pages based on scrollWidth
+  // Calculate Total Pages
   useEffect(() => {
     if (!contentRef.current || isSetup) return;
     
@@ -75,17 +75,43 @@ export default function VoxReader() {
   }, [content, fontSize, isSetup]);
 
   // Navigation Logic
-  const navigate = (dir: 'next' | 'prev') => {
-    const newPage = dir === 'next' 
-      ? Math.min(totalPages - 1, currentPage + 1)
-      : Math.max(0, currentPage - 1);
-    
-    setCurrentPage(newPage);
+  const goToPage = (page: number) => {
+    const targetPage = Math.max(0, Math.min(totalPages - 1, page));
+    setCurrentPage(targetPage);
     if (contentRef.current) {
       contentRef.current.scrollTo({
-        left: newPage * contentRef.current.clientWidth,
+        left: targetPage * contentRef.current.clientWidth,
         behavior: 'smooth'
       });
+    }
+  };
+
+  const navigate = (dir: 'next' | 'prev') => {
+    goToPage(dir === 'next' ? currentPage + 1 : currentPage - 1);
+  };
+
+  // Keyboard support
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isSetup) return;
+      if (e.key === 'ArrowRight' || e.key === ' ') {
+        e.preventDefault();
+        navigate('next');
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        navigate('prev');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSetup, totalPages, currentPage]);
+
+  const handleJump = () => {
+    const p = prompt(`跳轉頁碼 (1-${totalPages})`, (currentPage + 1).toString());
+    if (p) {
+      const pageNum = parseInt(p);
+      if (!isNaN(pageNum)) goToPage(pageNum - 1);
     }
   };
 
@@ -103,39 +129,21 @@ export default function VoxReader() {
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50">
         <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-xl space-y-6">
           <h1 className="text-3xl font-bold text-slate-800 text-center">VoxReader 閱聽助手</h1>
-          
           <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-600">Google 文件連結</label>
-              <input 
-                type="text" 
-                value={docUrl}
-                onChange={(e) => setDocUrl(e.target.value)}
-                placeholder="https://docs.google.com/document/d/..."
-                className="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-slate-600">Google Drive 音檔連結</label>
-              <input 
-                type="text" 
-                value={audioUrl}
-                onChange={(e) => setAudioUrl(e.target.value)}
-                placeholder="https://drive.google.com/file/d/..."
-                className="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
-              />
-            </div>
+            <input 
+              type="text" value={docUrl} onChange={(e) => setDocUrl(e.target.value)}
+              placeholder="Google 文件連結..."
+              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
+            />
+            <input 
+              type="text" value={audioUrl} onChange={(e) => setAudioUrl(e.target.value)}
+              placeholder="Google Drive 音檔連結..."
+              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
+            />
           </div>
-
-          <button 
-            onClick={handleLoad}
-            disabled={loading}
-            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:bg-blue-300"
-          >
+          <button onClick={handleLoad} disabled={loading} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:bg-blue-300">
             {loading ? '載入中...' : '開始視聽'}
           </button>
-          <p className="text-xs text-slate-400 text-center">提示：文件需設定為「知道連結的人均可檢視」</p>
         </div>
       </div>
     );
@@ -143,44 +151,30 @@ export default function VoxReader() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-stone-100 overflow-hidden select-none">
-      {/* Header Controls */}
+      {/* Progress Bar */}
+      <div className="absolute top-0 left-0 h-1 bg-blue-500 transition-all duration-300 z-30" style={{ width: `${((currentPage + 1) / totalPages) * 100}%` }} />
+
+      {/* Header */}
       <div className="h-16 flex items-center justify-between px-6 bg-white border-b shadow-sm z-20">
         <button onClick={() => setIsSetup(true)} className="text-slate-500 hover:text-slate-800 font-medium">← 返回</button>
-        
         <div className="flex items-center space-x-4">
-          <span className="text-sm text-slate-500 hidden sm:inline">字體: {fontSize}px</span>
-          <input 
-            type="range" min="16" max="72" value={fontSize} 
-            onChange={(e) => setFontSize(parseInt(e.target.value))}
-            className="w-24 sm:w-32 accent-blue-600"
-          />
+          <input type="range" min="16" max="72" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-24 sm:w-32 accent-blue-600" />
         </div>
-
-        <div className="text-slate-500 text-sm">
+        <button onClick={handleJump} className="text-slate-500 text-sm font-mono bg-slate-100 px-2 py-1 rounded hover:bg-slate-200">
           {currentPage + 1} / {totalPages}
-        </div>
+        </button>
       </div>
 
       {/* Reader Area */}
-      <div 
-        className="flex-1 relative overflow-hidden"
-        onClick={(e) => {
+      <div className="flex-1 relative overflow-hidden" onClick={(e) => {
            const width = window.innerWidth;
-           if (e.clientX > width * 0.7) navigate('next');
-           if (e.clientX < width * 0.3) navigate('prev');
-        }}
-      >
-        <div 
-          ref={contentRef}
-          className="h-full w-full overflow-hidden transition-all duration-300 ease-in-out"
+           if (e.clientX > width * 0.75) navigate('next');
+           if (e.clientX < width * 0.25) navigate('prev');
+        }}>
+        <div ref={contentRef} className="h-full w-full overflow-hidden transition-all duration-300 ease-in-out"
           style={{ 
-            columnWidth: '100vw',
-            columnGap: '0px',
-            columnFill: 'auto',
-            fontSize: `${fontSize}px`, 
-            lineHeight: '1.8',
-            padding: '40px 10%',
-            wordBreak: 'break-word'
+            columnWidth: '100vw', columnGap: '0px', columnFill: 'auto',
+            fontSize: `${fontSize}px`, lineHeight: '1.8', padding: '40px 10%', wordBreak: 'break-word'
           }}
           dangerouslySetInnerHTML={{ __html: content }}
         />
@@ -188,20 +182,10 @@ export default function VoxReader() {
 
       {/* Footer Player */}
       {audioUrl && (
-        <div className="h-24 bg-white border-t flex items-center justify-center px-4 sm:px-10 shadow-lg z-20">
-          <audio 
-            controls 
-            src={getDirectAudioUrl(audioUrl)} 
-            className="w-full max-w-3xl"
-          />
+        <div className="h-24 bg-white border-t flex items-center justify-center px-4 shadow-lg z-20">
+          <audio controls src={getDirectAudioUrl(audioUrl)} className="w-full max-w-3xl" />
         </div>
       )}
-
-      {/* Navigation Buttons (Desktop) */}
-      <div className="fixed bottom-28 right-4 hidden sm:flex flex-col space-y-2 opacity-30 hover:opacity-100 transition z-30">
-        <button onClick={() => navigate('prev')} className="p-3 bg-white rounded-full shadow border">上頁</button>
-        <button onClick={() => navigate('next')} className="p-3 bg-white rounded-full shadow border">下頁</button>
-      </div>
     </div>
   );
 }
