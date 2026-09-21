@@ -69,8 +69,10 @@ export default function VoxReader() {
         msg = "權限不足。請確認該 Google 文件已設定為「知道連結的人均可檢視」。";
       } else if (err.message === 'EMPTY_CONTENT') {
         msg = "抓取到了空白內容。請確認連結正確且文件內含有文字。";
+      } else {
+        msg = `讀取錯誤: ${err.message || '未知錯誤'}`;
       }
-      setContent(`<p style='color: gray; padding: 20px;'>${msg}</p>`);
+      setContent(`<p style='color: gray; padding: 20px;'>${msg}<br/><br/>提示：若持續失敗，請嘗試在文件中使用「檔案 > 分享 > 發佈到網路」並使用該連結。</p>`);
       setIsSetup(false);
     } finally {
       setLoading(false);
