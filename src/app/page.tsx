@@ -34,45 +34,44 @@ export default function VoxReader() {
       const res = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
       const rawHtml = await res.text();
       
+      // 偵測是否抓到的是登入頁面或權限錯誤頁面
+      if (rawHtml.includes('googlestatic.com') || rawHtml.includes('ServiceLogin')) {
+        throw new Error('AUTH_REQUIRED');
+      }
+
       const parser = new DOMParser();
       const doc = parser.parseFromString(rawHtml, 'text/html');
       
-      // 1. 徹底移除 Google 內部的干擾標籤與非文字元件
-      doc.querySelectorAll('style, script, img, iframe, noscript, canvas, video, svg, link').forEach(el => el.remove());
-      
-      // 2. 移除帶有複雜定位或 Google 特有 UI 的元件
-      doc.querySelectorAll('[style*="position:fixed"], [style*="position:absolute"], .docs-ml-header-item').forEach(el => el.remove());
-
-      // 3. 獲取 Body 內容
+      // 優先抓取 export 格式的內容
+      let bodyContent = '';
       const body = doc.querySelector('body');
       
       if (body) {
-        // 4. 強制清理所有元素的內聯樣式，這通常是導致「無法顯示」或「格式錯誤」的主因
-        const allElements = body.querySelectorAll('*');
-        allElements.forEach(el => {
+        // 徹底清除可能干擾的樣式，但保留文字結構
+        body.querySelectorAll('style, script, img, iframe').forEach(el => el.remove());
+        body.querySelectorAll('*').forEach(el => {
           el.removeAttribute('style');
           el.removeAttribute('class');
-          el.removeAttribute('id');
         });
-        
-        const bodyContent = body.innerHTML;
-        
-        // 5. 再次檢查是否真的有內容
-        if (!bodyContent || bodyContent.trim().length < 20) {
-          throw new Error('Content too short');
-        }
-        
-        setContent(bodyContent);
-      } else {
-        throw new Error('No body found');
+        bodyContent = body.innerHTML;
+      }
+
+      if (!bodyContent || bodyContent.trim().length < 10) {
+        throw new Error('EMPTY_CONTENT');
       }
       
+      setContent(bodyContent);
       setIsSetup(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Fetch Error:', err);
-      // 如果出錯，至少顯示出抓到的原始片段供參考（或顯示提示）
-      setContent("<p style='color: gray; padding: 20px;'>內容讀取異常。請確認該 Google 文件已開啟「知道連結的人均可檢視」。<br/><br/>若文件包含過於複雜的插入元件（如錄音檔組件），請嘗試將其移除後再試。</p>");
-      setIsSetup(false); // 依然進入，讓使用者能看到提示
+      let msg = "內容讀取失敗。";
+      if (err.message === 'AUTH_REQUIRED') {
+        msg = "權限不足。請確認該 Google 文件已設定為「知道連結的人均可檢視」。";
+      } else if (err.message === 'EMPTY_CONTENT') {
+        msg = "抓取到了空白內容。請確認連結正確且文件內含有文字。";
+      }
+      setContent(`<p style='color: gray; padding: 20px;'>${msg}</p>`);
+      setIsSetup(false);
     } finally {
       setLoading(false);
     }
