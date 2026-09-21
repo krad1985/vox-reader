@@ -33,7 +33,10 @@ export default function VoxReader() {
       const html = await res.text();
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
-      doc.querySelectorAll('style, script, img').forEach(el => el.remove());
+      
+      // 清理 Google Docs 帶來的干擾樣式與空標籤
+      doc.querySelectorAll('style, script, img, span[style*="position:fixed"]').forEach(el => el.remove());
+      
       const bodyContent = doc.querySelector('body')?.innerHTML || '';
       setContent(bodyContent);
       setIsSetup(false);
@@ -45,22 +48,24 @@ export default function VoxReader() {
     }
   };
 
-  // 核心：利用 CSS Column 計算精準頁數
+  // 核心：使用 scroll-snap 確保對齊，並精確計算頁數
   useEffect(() => {
     if (!contentRef.current || isSetup) return;
     
     const updatePages = () => {
       const el = contentRef.current;
       if (el) {
+        // 關鍵：使用容器實際寬度作為步進單位
+        const viewW = el.getBoundingClientRect().width;
         const totalW = el.scrollWidth;
-        const viewW = el.clientWidth;
-        // 總頁數 = 總捲動寬度 / 視窗寬度
-        const pages = Math.max(1, Math.round(totalW / (viewW || 1)));
+        // 增加一個微小的容錯值避免浮點數計算導致多出一頁
+        const pages = Math.max(1, Math.round(totalW / viewW));
         setTotalPages(pages);
       }
     };
 
-    const timer = setTimeout(updatePages, 300);
+    // 延遲執行確保瀏覽器渲染完成
+    const timer = setTimeout(updatePages, 500);
     window.addEventListener('resize', updatePages);
     return () => {
       clearTimeout(timer);
@@ -72,8 +77,9 @@ export default function VoxReader() {
     const targetPage = Math.max(0, Math.min(totalPages - 1, page));
     setCurrentPage(targetPage);
     if (contentRef.current) {
+      const viewW = contentRef.current.getBoundingClientRect().width;
       contentRef.current.scrollTo({
-        left: targetPage * contentRef.current.clientWidth,
+        left: targetPage * viewW,
         behavior: 'smooth'
       });
     }
@@ -112,17 +118,17 @@ export default function VoxReader() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-stone-100 overflow-hidden">
-      {/* 頁面頂部進度條 */}
+      {/* 頂部進度條 */}
       <div className="absolute top-0 left-0 h-1 bg-blue-500 z-30 transition-all duration-300" style={{ width: `${((currentPage + 1) / totalPages) * 100}%` }} />
 
-      <div className="h-16 flex items-center justify-between px-6 bg-white border-b z-20">
+      <div className="h-14 flex items-center justify-between px-6 bg-white border-b z-20">
         <button onClick={() => setIsSetup(true)} className="text-slate-500 text-sm">← 返回</button>
         <input type="range" min="16" max="60" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-24 accent-blue-600" />
         <div className="text-slate-500 text-xs font-mono">{currentPage + 1} / {totalPages}</div>
       </div>
 
-      {/* 閱讀主體：CSS Column 佈局 */}
-      <div className="flex-1 relative overflow-hidden" 
+      {/* 閱讀容器：強制對齊視窗 */}
+      <div className="flex-1 relative bg-stone-100" 
            onClick={(e) => {
              const x = e.clientX;
              const w = window.innerWidth;
@@ -130,15 +136,18 @@ export default function VoxReader() {
              if (x < w * 0.3) goToPage(currentPage - 1);
            }}>
         <div ref={contentRef} 
-             className="h-full w-full overflow-hidden transition-all duration-500 ease-in-out"
+             className="h-full w-full overflow-x-hidden scroll-smooth"
              style={{ 
+               display: 'block',
                columnWidth: '100vw',
-               columnGap: '0px',
+               columnGap: '40px', // 設定 Gap 讓內容分塊更明顯
                columnFill: 'auto',
                fontSize: `${fontSize}px`, 
                lineHeight: '1.8',
-               padding: '40px 10%',
-               color: '#2d3748'
+               padding: '20px 20px', // 固定內邊距，不使用百分比
+               boxSizing: 'border-box',
+               color: '#2d3748',
+               WebkitOverflowScrolling: 'touch'
              }}
              dangerouslySetInnerHTML={{ __html: content }} />
       </div>
