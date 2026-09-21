@@ -2,55 +2,59 @@ import { NextResponse } from 'next/server';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  let url = searchParams.get('url');
+  const inputUrl = searchParams.get('url');
 
-  if (!url) {
+  if (!inputUrl) {
     return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
   }
 
-  // 強制轉換為 /pub 格式 (Google Docs "發佈到網路" 的路徑)
-  // 因為 /export 格式在某些文件或權限下會返回 404/302 導致 fetch 失敗
-  let fetchUrl = url;
-  if (url.includes('docs.google.com/document/d/')) {
-    const docId = url.match(/\/d\/(.+?)(\/|$|#|\?)/)?.[1];
-    if (docId) {
-      // 嘗試使用 /pub 格式，這通常是 Vercel 環境最穩定能抓到內容的路徑
-      fetchUrl = `https://docs.google.com/document/d/${docId}/pub`;
+  // 1. 提取 ID
+  const docIdMatch = inputUrl.match(/\/d\/(.+?)(\/|$|#|\?)/);
+  const docId = docIdMatch ? docIdMatch[1] : null;
+
+  if (!docId) {
+    return NextResponse.json({ error: '無法從網址中識別 Google 文件 ID' }, { status: 400 });
+  }
+
+  // 2. 定義嘗試的 URL 優先順序
+  // 優先嘗試 export 格式，因為它對「知道連結即可檢視」最友善
+  const urlsToTry = [
+    `https://docs.google.com/document/d/${docId}/export?format=html`,
+    `https://docs.google.com/document/d/${docId}/pub`
+  ];
+
+  let lastStatus = 0;
+
+  for (const fetchUrl of urlsToTry) {
+    try {
+      const response = await fetch(fetchUrl, {
+        next: { revalidate: 0 },
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      });
+
+      if (response.ok) {
+        const html = await response.text();
+        return new NextResponse(html, {
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+      lastStatus = response.status;
+    } catch (e: any) {
+      console.error('Fetch error:', e.message);
     }
   }
 
-  try {
-    const response = await fetch(fetchUrl, {
-      next: { revalidate: 0 }, // 禁用快取確保拿到最新內容
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
-    });
-
-    if (!response.ok) {
-      // 如果 /pub 失敗，嘗試最後的 export 格式
-      const docId = url.match(/\/d\/(.+?)(\/|$|#|\?)/)?.[1];
-      const exportUrl = `https://docs.google.com/document/d/${docId}/export?format=html`;
-      const secondTry = await fetch(exportUrl);
-      
-      if (!secondTry.ok) {
-        return NextResponse.json({ 
-          error: `Google Docs returned ${response.status} for /pub and ${secondTry.status} for /export. Please ensure 'Publish to web' is enabled.` 
-        }, { status: 500 });
-      }
-      
-      const html = await secondTry.text();
-      return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  // 3. 如果都失敗，回傳詳細錯誤
+  return NextResponse.json({ 
+    error: `讀取失敗 (錯誤碼 ${lastStatus})。`,
+    debug: {
+      docId,
+      hint: "401 代表權限不足。請確認文件已設定為『知道連結的人均可檢視』。若您在瀏覽器能看但這裡不行，通常是因為該文件尚未對外開放，Server 無法以您的私人身份讀取。"
     }
-    
-    const html = await response.text();
-    return new NextResponse(html, {
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Access-Control-Allow-Origin': '*',
-      },
-    });
-  } catch (error: any) {
-    return NextResponse.json({ error: `Server Fetch Error: ${error.message}` }, { status: 500 });
-  }
+  }, { status: 500 });
 }

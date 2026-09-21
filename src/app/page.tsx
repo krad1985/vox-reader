@@ -32,12 +32,20 @@ export default function VoxReader() {
 
     try {
       const res = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
-      const rawHtml = await res.text();
+      const data = await res.json().catch(() => null);
       
-      // 偵測是否抓到的是登入頁面或權限錯誤頁面
-      if (rawHtml.includes('googlestatic.com') || rawHtml.includes('ServiceLogin')) {
-        throw new Error('AUTH_REQUIRED');
+      // 如果回傳的是 JSON 且包含 error，代表後端報錯了
+      if (data && data.error) {
+        throw new Error(data.debug ? `${data.error} ${data.debug.hint}` : data.error);
       }
+
+      // 如果沒報錯，我們預期得到的是 HTML (但 fetch-doc 現在可能回傳 JSON 或 HTML)
+      // 需要重新 fetch 一次或者調整 API 回傳邏輯。
+      // 為了簡化，我讓 API 始終回傳 JSON 或 HTML。
+      
+      // 重新取得 HTML
+      const htmlRes = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
+      const rawHtml = await htmlRes.text();
 
       const parser = new DOMParser();
       const doc = parser.parseFromString(rawHtml, 'text/html');
