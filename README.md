@@ -1,36 +1,29 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# VoxReader 閱聽助手
 
-## Getting Started
+這是一個專為視聽學習設計的極簡網頁工具，支援 Google Docs 自動連動與音檔播放。
 
-First, run the development server:
+## 功能特色
+- **動態連動**: 直接抓取 Google Docs「發佈到網路」的 HTML，文件更新即刻同步。
+- **自動換頁**: 採用語義分頁邏輯，根據字體大小自動計算分頁。
+- **字體縮放**: 前端拖動滑桿即時調整字體，適合各種距離閱覽。
+- **音影整合**: 支援 Google Drive 音檔連結自動轉換直連播放。
+- **隱私優先**: 個人自用設計，所有連結暫存於瀏覽器 localStorage。
 
+## 如何使用
+1. **Google 文件**: 
+   - 開啟文件 -> 檔案 -> 分享 -> 發佈到網路。
+   - 點擊「發佈」後，複製該 HTML 網址。
+2. **Google Drive 音檔**:
+   - 右鍵音檔 -> 取得連結 -> 權限設為「知道連結的人均可檢視」。
+   - 複製連結貼入 VoxReader。
+
+## 部署到 Vercel
+1. 將本專案上傳至 GitHub。
+2. 在 Vercel 點擊 `Add New > Project` 並選取此 repo。
+3. 一鍵部署即可使用。
+
+## 本地開發
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
