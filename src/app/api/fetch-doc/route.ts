@@ -20,7 +20,19 @@ export async function GET(request: Request) {
     const response = await fetch(url);
     if (!response.ok) throw new Error('Failed to fetch content');
     
-    const html = await response.text();
+    let html = await response.text();
+    
+    // 如果抓到的是 Google 的導航/預覽頁面，而非純 HTML 內容
+    // 雖然 export?format=html 通常很乾淨，但有時權限不足會抓到導航頁
+    if (html.includes('google-drive-viewer') || html.includes('id="docs-header"')) {
+       // 試圖提取最核心的內容區域
+       const startMatch = html.indexOf('<body');
+       const endMatch = html.lastIndexOf('</body>');
+       if (startMatch !== -1 && endMatch !== -1) {
+         html = html.substring(startMatch, endMatch + 7);
+       }
+    }
+
     return new NextResponse(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
