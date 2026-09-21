@@ -104,7 +104,7 @@ export default function VoxReader() {
                 type="text" 
                 value={docUrl}
                 onChange={(e) => setDocUrl(e.target.value)}
-                placeholder="https://docs.google.com/document/d/.../pub"
+                placeholder="https://docs.google.com/document/d/..."
                 className="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
@@ -128,7 +128,7 @@ export default function VoxReader() {
           >
             {loading ? '載入中...' : '開始視聽'}
           </button>
-          <p className="text-xs text-slate-400 text-center">提示：Google 文件需選擇「檔案 {" > "} 分享 {" > "} 發佈到網路」</p>
+          <p className="text-xs text-slate-400 text-center">提示：文件需設定為「知道連結的人均可檢視」</p>
         </div>
       </div>
     );
