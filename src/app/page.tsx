@@ -6,6 +6,7 @@ export default function VoxReader() {
   const [docUrl, setDocUrl] = useState('');
   const [audioUrl, setAudioUrl] = useState('');
   const [fontSize, setFontSize] = useState(24);
+  const [contentWidth, setContentWidth] = useState(800); // 預設 800px
   const [isSetup, setIsSetup] = useState(true);
 
   const [content, setContent] = useState<string>('');
@@ -16,8 +17,10 @@ export default function VoxReader() {
   useEffect(() => {
     const savedDoc = localStorage.getItem('vox-doc-url');
     const savedAudio = localStorage.getItem('vox-audio-url');
+    const savedWidth = localStorage.getItem('vox-content-width');
     if (savedDoc) setDocUrl(savedDoc);
     if (savedAudio) setAudioUrl(savedAudio);
+    if (savedWidth) setContentWidth(parseInt(savedWidth));
   }, []);
 
   const handleLoad = async () => {
@@ -25,6 +28,7 @@ export default function VoxReader() {
     setLoading(true);
     localStorage.setItem('vox-doc-url', docUrl);
     localStorage.setItem('vox-audio-url', audioUrl);
+    localStorage.setItem('vox-content-width', contentWidth.toString());
 
     try {
       const res = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
@@ -32,7 +36,6 @@ export default function VoxReader() {
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
       
-      // 清理樣式，但保持結構
       doc.querySelectorAll('style, script, img').forEach(el => el.remove());
       const bodyContent = doc.querySelector('body')?.innerHTML || '';
       
@@ -45,13 +48,12 @@ export default function VoxReader() {
     }
   };
 
-  // 簡單的點擊翻頁（捲動一個視窗高度）
   const scrollPage = (dir: 'next' | 'prev') => {
     if (scrollRef.current) {
       const viewH = scrollRef.current.clientHeight;
       const currentScroll = scrollRef.current.scrollTop;
       scrollRef.current.scrollTo({
-        top: dir === 'next' ? currentScroll + viewH : currentScroll - viewH,
+        top: dir === 'next' ? currentScroll + viewH * 0.9 : currentScroll - viewH * 0.9,
         behavior: 'smooth'
       });
     }
@@ -80,8 +82,15 @@ export default function VoxReader() {
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50">
         <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-xl space-y-6">
           <h1 className="text-2xl font-bold text-center">VoxReader</h1>
-          <input type="text" value={docUrl} onChange={(e) => setDocUrl(e.target.value)} placeholder="Google Docs 連結" className="w-full p-3 border rounded-lg" />
-          <input type="text" value={audioUrl} onChange={(e) => setAudioUrl(e.target.value)} placeholder="音檔連結" className="w-full p-3 border rounded-lg" />
+          <div className="space-y-4">
+            <input type="text" value={docUrl} onChange={(e) => setDocUrl(e.target.value)} placeholder="Google Docs 連結" className="w-full p-3 border rounded-lg" />
+            <input type="text" value={audioUrl} onChange={(e) => setAudioUrl(e.target.value)} placeholder="音檔連結" className="w-full p-3 border rounded-lg" />
+            
+            <div className="space-y-2">
+              <label className="text-sm text-slate-500">閱讀寬度: {contentWidth === 2000 ? '自動' : `${contentWidth}px`}</label>
+              <input type="range" min="400" max="2000" step="50" value={contentWidth} onChange={(e) => setContentWidth(parseInt(e.target.value))} className="w-full accent-blue-600" />
+            </div>
+          </div>
           <button onClick={handleLoad} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold">進入視聽</button>
         </div>
       </div>
@@ -90,33 +99,46 @@ export default function VoxReader() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-stone-50 overflow-hidden">
-      {/* 頂部工具列 */}
       <div className="h-14 flex items-center justify-between px-6 bg-white border-b z-20">
         <button onClick={() => setIsSetup(true)} className="text-slate-500">← 返回</button>
-        <input type="range" min="16" max="60" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-32 accent-blue-600" />
-        <div className="w-10" /> 
+        
+        <div className="flex items-center space-x-6">
+          <div className="flex items-center space-x-2">
+            <span className="text-[10px] text-slate-400">字體</span>
+            <input type="range" min="16" max="72" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-20 sm:w-32 accent-blue-600" />
+          </div>
+          
+          <div className="hidden sm:flex items-center space-x-2">
+            <span className="text-[10px] text-slate-400">寬度</span>
+            <input type="range" min="400" max="2000" step="50" value={contentWidth} onChange={(e) => setContentWidth(parseInt(e.target.value))} className="w-20 sm:w-32 accent-gray-400" />
+          </div>
+        </div>
+        
+        <div className="w-8" /> 
       </div>
 
-      {/* 閱讀主體：改回垂直分段捲動，這在所有設備都最穩定 */}
       <div 
         ref={scrollRef}
         className="flex-1 overflow-y-auto scroll-smooth"
         onClick={(e) => {
           const y = e.clientY;
           const h = window.innerHeight;
-          // 點擊螢幕下半部翻下一頁，上半部上一頁
-          if (y > h * 0.6) scrollPage('next');
+          if (y > h * 0.7) scrollPage('next');
           else if (y < h * 0.3) scrollPage('prev');
         }}
       >
         <div 
-          className="max-w-4xl mx-auto py-10 px-6 sm:px-12"
-          style={{ fontSize: `${fontSize}px`, lineHeight: '1.8', color: '#334155' }}
+          className="mx-auto py-10 px-6 sm:px-12 transition-all duration-300"
+          style={{ 
+            maxWidth: contentWidth >= 2000 ? '100%' : `${contentWidth}px`, 
+            fontSize: `${fontSize}px`, 
+            lineHeight: '1.8', 
+            color: '#334155' 
+          }}
           dangerouslySetInnerHTML={{ __html: content }}
         />
       </div>
 
-      {/* 底部播放器 */}
       {audioUrl && (
         <div className="h-20 bg-white border-t flex items-center justify-center px-4 z-20 shadow-inner">
           <audio controls src={getDirectAudioUrl(audioUrl)} className="w-full max-w-2xl h-8" />
