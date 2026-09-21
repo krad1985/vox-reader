@@ -10,12 +10,12 @@ export default function VoxReader() {
   const [isSetup, setIsSetup] = useState(true);
 
   // Content States
-  const [content, setContent] = useState<string[]>([]);
-  const [pages, setPages] = useState<string[][]>([]);
+  const [content, setContent] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Load from LocalStorage
   useEffect(() => {
@@ -36,56 +36,63 @@ export default function VoxReader() {
       const res = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
       const html = await res.text();
       
-      // Basic Parser: Extracting paragraphs from HTML
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
-      const paragraphs = Array.from(doc.querySelectorAll('p, h1, h2, h3, li'))
-        .map(el => el.outerHTML)
-        .filter(html => html.length > 20); // Filter empty/short tags
-
-      setContent(paragraphs);
+      const styleTags = doc.querySelectorAll('style');
+      styleTags.forEach(t => t.remove());
+      
+      const bodyContent = doc.querySelector('body')?.innerHTML || '';
+      setContent(bodyContent);
       setIsSetup(false);
+      setCurrentPage(0);
     } catch (err) {
-      alert('載入失敗，請確認網址是否已發佈到網路');
+      alert('載入失敗，請確認網址是否已設定為公開檢視');
     } finally {
       setLoading(false);
     }
   };
 
-  // Pagination Logic (Simplified Semantic Pagination)
+  // Calculate Total Pages based on scrollWidth
   useEffect(() => {
-    if (content.length === 0 || isSetup) return;
-
-    const paginateContent = () => {
-      const newPages: string[][] = [];
-      let currentPageItems: string[] = [];
-      
-      // 簡單估計：每一頁大約 800-1200 字元（視字體大小而定）
-      const charsPerPage = Math.floor(20000 / fontSize); 
-      let currentChars = 0;
-
-      content.forEach(p => {
-        const textLen = p.replace(/<[^>]*>/g, '').length;
-        if (currentChars + textLen > charsPerPage && currentPageItems.length > 0) {
-          newPages.push(currentPageItems);
-          currentPageItems = [p];
-          currentChars = textLen;
-        } else {
-          currentPageItems.push(p);
-          currentChars += textLen;
-        }
-      });
-      if (currentPageItems.length > 0) newPages.push(currentPageItems);
-      setPages(newPages);
+    if (!contentRef.current || isSetup) return;
+    
+    const updatePages = () => {
+      const el = contentRef.current;
+      if (el) {
+        const totalW = el.scrollWidth;
+        const viewW = el.clientWidth;
+        const pages = Math.max(1, Math.ceil(totalW / (viewW || 1)));
+        setTotalPages(pages);
+      }
     };
 
-    paginateContent();
+    const timer = setTimeout(updatePages, 500);
+    window.addEventListener('resize', updatePages);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', updatePages);
+    };
   }, [content, fontSize, isSetup]);
+
+  // Navigation Logic
+  const navigate = (dir: 'next' | 'prev') => {
+    const newPage = dir === 'next' 
+      ? Math.min(totalPages - 1, currentPage + 1)
+      : Math.max(0, currentPage - 1);
+    
+    setCurrentPage(newPage);
+    if (contentRef.current) {
+      contentRef.current.scrollTo({
+        left: newPage * contentRef.current.clientWidth,
+        behavior: 'smooth'
+      });
+    }
+  };
 
   // Audio URL Converter
   const getDirectAudioUrl = (url: string) => {
     if (url.includes('drive.google.com')) {
-      const id = url.match(/\/d\/(.+?)\//)?.[1];
+      const id = url.match(/\/d\/(.+?)(\/|$)/)?.[1];
       return id ? `https://drive.google.com/uc?export=download&id=${id}` : url;
     }
     return url;
@@ -99,13 +106,13 @@ export default function VoxReader() {
           
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-600">Google 文件發佈網址</label>
+              <label className="block text-sm font-medium text-slate-600">Google 文件連結</label>
               <input 
                 type="text" 
                 value={docUrl}
                 onChange={(e) => setDocUrl(e.target.value)}
                 placeholder="https://docs.google.com/document/d/..."
-                className="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                className="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
               />
             </div>
             
@@ -116,7 +123,7 @@ export default function VoxReader() {
                 value={audioUrl}
                 onChange={(e) => setAudioUrl(e.target.value)}
                 placeholder="https://drive.google.com/file/d/..."
-                className="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                className="w-full mt-1 p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
               />
             </div>
           </div>
@@ -135,45 +142,53 @@ export default function VoxReader() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-stone-100 overflow-hidden">
+    <div className="fixed inset-0 flex flex-col bg-stone-100 overflow-hidden select-none">
       {/* Header Controls */}
-      <div className="h-16 flex items-center justify-between px-6 bg-white border-b shadow-sm z-10">
-        <button onClick={() => setIsSetup(true)} className="text-slate-500 hover:text-slate-800 font-medium">← 返回設定</button>
+      <div className="h-16 flex items-center justify-between px-6 bg-white border-b shadow-sm z-20">
+        <button onClick={() => setIsSetup(true)} className="text-slate-500 hover:text-slate-800 font-medium">← 返回</button>
         
         <div className="flex items-center space-x-4">
-          <span className="text-sm text-slate-500">字體大小: {fontSize}px</span>
+          <span className="text-sm text-slate-500 hidden sm:inline">字體: {fontSize}px</span>
           <input 
             type="range" min="16" max="72" value={fontSize} 
             onChange={(e) => setFontSize(parseInt(e.target.value))}
-            className="w-32 accent-blue-600"
+            className="w-24 sm:w-32 accent-blue-600"
           />
         </div>
 
         <div className="text-slate-500 text-sm">
-          頁次: {currentPage + 1} / {pages.length}
+          {currentPage + 1} / {totalPages}
         </div>
       </div>
 
       {/* Reader Area */}
       <div 
-        ref={containerRef}
-        className="flex-1 overflow-y-auto px-[10%] py-12 flex flex-col items-center"
+        className="flex-1 relative overflow-hidden"
         onClick={(e) => {
            const width = window.innerWidth;
-           if (e.clientX > width * 0.7) setCurrentPage(Math.min(pages.length - 1, currentPage + 1));
-           if (e.clientX < width * 0.3) setCurrentPage(Math.max(0, currentPage - 1));
+           if (e.clientX > width * 0.7) navigate('next');
+           if (e.clientX < width * 0.3) navigate('prev');
         }}
       >
         <div 
-          className="max-w-4xl w-full transition-all duration-300 ease-in-out"
-          style={{ fontSize: `${fontSize}px`, lineHeight: '1.8' }}
-          dangerouslySetInnerHTML={{ __html: pages[currentPage]?.join('') || '載入中...' }}
+          ref={contentRef}
+          className="h-full w-full overflow-hidden transition-all duration-300 ease-in-out"
+          style={{ 
+            columnWidth: '100vw',
+            columnGap: '0px',
+            columnFill: 'auto',
+            fontSize: `${fontSize}px`, 
+            lineHeight: '1.8',
+            padding: '40px 10%',
+            wordBreak: 'break-word'
+          }}
+          dangerouslySetInnerHTML={{ __html: content }}
         />
       </div>
 
       {/* Footer Player */}
       {audioUrl && (
-        <div className="h-24 bg-white border-t flex items-center justify-center px-10 shadow-[0_-4px_6px_-1px_rgb(0,0,0,0.05)]">
+        <div className="h-24 bg-white border-t flex items-center justify-center px-4 sm:px-10 shadow-lg z-20">
           <audio 
             controls 
             src={getDirectAudioUrl(audioUrl)} 
@@ -182,10 +197,10 @@ export default function VoxReader() {
         </div>
       )}
 
-      {/* Key Controls */}
-      <div className="fixed bottom-32 right-8 flex flex-col space-y-2 opacity-50 hover:opacity-100 transition">
-        <button onClick={() => setCurrentPage(Math.max(0, currentPage - 1))} className="p-3 bg-white rounded-full shadow border">上頁</button>
-        <button onClick={() => setCurrentPage(Math.min(pages.length - 1, currentPage + 1))} className="p-3 bg-white rounded-full shadow border">下頁</button>
+      {/* Navigation Buttons (Desktop) */}
+      <div className="fixed bottom-28 right-4 hidden sm:flex flex-col space-y-2 opacity-30 hover:opacity-100 transition z-30">
+        <button onClick={() => navigate('prev')} className="p-3 bg-white rounded-full shadow border">上頁</button>
+        <button onClick={() => navigate('next')} className="p-3 bg-white rounded-full shadow border">下頁</button>
       </div>
     </div>
   );
