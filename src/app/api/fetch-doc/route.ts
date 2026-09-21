@@ -8,21 +8,29 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Missing URL' }, { status: 400 });
   }
 
-  // 1. 提取 ID
-  const docIdMatch = inputUrl.match(/\/d\/(.+?)(\/|$|#|\?)/);
-  const docId = docIdMatch ? docIdMatch[1] : null;
+  // 1. 提取 ID (支援標準 /d/ID 格式以及發佈後的 /d/e/ID 格式)
+  const docIdMatch = inputUrl.match(/\/d\/(e\/)?(.+?)(\/|$|#|\?)/);
+  const isPublished = !!docIdMatch?.[1];
+  const docId = docIdMatch ? docIdMatch[2] : null;
 
   if (!docId) {
-    return NextResponse.json({ error: '無法從網址中識別 Google 文件 ID' }, { status: 400 });
+    return NextResponse.json({ error: '無法識別 Google 文件 ID' }, { status: 400 });
   }
 
   // 2. 定義嘗試的 URL 優先順序
-  // /mobilebasic 通常對於「知道連結即可檢視」且帶有複雜元件的文件最為寬鬆且穩定
-  const urlsToTry = [
-    `https://docs.google.com/document/d/${docId}/mobilebasic`,
-    `https://docs.google.com/document/d/${docId}/export?format=html`,
-    `https://docs.google.com/document/d/${docId}/pub`
-  ];
+  let urlsToTry = [];
+  
+  if (isPublished || inputUrl.includes('/pub')) {
+    // 如果使用者直接提供發佈連結，優先使用
+    urlsToTry = [inputUrl];
+  } else {
+    // 否則嘗試各種匯出路徑
+    urlsToTry = [
+      `https://docs.google.com/document/d/${docId}/mobilebasic`,
+      `https://docs.google.com/document/d/${docId}/export?format=html`,
+      `https://docs.google.com/document/d/${docId}/pub`
+    ];
+  }
 
   let lastStatus = 0;
 
