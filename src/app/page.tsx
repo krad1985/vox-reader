@@ -43,25 +43,38 @@ export default function VoxReader() {
       // 需要重新 fetch 一次或者調整 API 回傳邏輯。
       // 為了簡化，我讓 API 始終回傳 JSON 或 HTML。
       
-      // 重新取得 HTML
+      // 重新取得內容
       const htmlRes = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
-      const rawHtml = await htmlRes.text();
-
+      let rawHtml = await htmlRes.text();
+      
+      // 如果抓到的是 Google 的帶導覽介面 (HTML)，我們需要提取內部真正的內容區塊
       const parser = new DOMParser();
       const doc = parser.parseFromString(rawHtml, 'text/html');
       
-      // 優先抓取 export 格式的內容
-      let bodyContent = '';
-      const body = doc.querySelector('body');
+      // 關鍵：嘗試從 Google 的各種容器中尋找核心內容
+      // 1. 嘗試找 id="contents" (Google Docs 常用)
+      // 2. 嘗試找 .doc-content
+      // 3. 否則取 body
+      const mainContent = doc.querySelector('#contents') || doc.querySelector('.doc-content') || doc.body;
       
-      if (body) {
-        // 徹底清除可能干擾的樣式，但保留文字結構
-        body.querySelectorAll('style, script, img, iframe').forEach(el => el.remove());
-        body.querySelectorAll('*').forEach(el => {
+      if (mainContent) {
+        // 徹底清除干擾標籤，但保留基本文字
+        mainContent.querySelectorAll('style, script, img, iframe, link, noscript').forEach(el => el.remove());
+        
+        // 移除所有 inline 樣式以避免 layout 跑掉
+        const all = mainContent.querySelectorAll('*');
+        all.forEach(el => {
           el.removeAttribute('style');
           el.removeAttribute('class');
+          el.removeAttribute('id');
         });
-        bodyContent = body.innerHTML;
+        
+        const bodyContent = mainContent.innerHTML;
+        if (!bodyContent || bodyContent.trim().length < 10) throw new Error('EMPTY_CONTENT');
+        
+        setContent(bodyContent);
+      } else {
+        throw new Error('NO_CONTENT_FOUND');
       }
 
       if (!bodyContent || bodyContent.trim().length < 10) {

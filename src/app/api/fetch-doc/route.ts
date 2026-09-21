@@ -17,10 +17,12 @@ export async function GET(request: Request) {
   }
 
   // 2. 定義嘗試的 URL 優先順序
-  // 優先嘗試 export 格式，因為它對「知道連結即可檢視」最友善
+  // 優先嘗試直接訪問原始網址，因為對於「知道連結的人均可檢視」且帶有複雜組件的文件，
+  // Google 有時會攔截伺服器端的 export 請求，但允許讀取預覽頁面。
   const urlsToTry = [
-    `https://docs.google.com/document/d/${docId}/export?format=html`,
-    `https://docs.google.com/document/d/${docId}/pub`
+    inputUrl, // 原始網址 (可能是 .../edit...)
+    `https://docs.google.com/document/d/${docId}/pub`,
+    `https://docs.google.com/document/d/${docId}/export?format=html`
   ];
 
   let lastStatus = 0;
