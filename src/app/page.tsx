@@ -3,13 +3,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 export default function VoxReader() {
-  // Config States
   const [docUrl, setDocUrl] = useState('');
   const [audioUrl, setAudioUrl] = useState('');
   const [fontSize, setFontSize] = useState(24);
   const [isSetup, setIsSetup] = useState(true);
 
-  // Content States
   const [content, setContent] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -17,7 +15,6 @@ export default function VoxReader() {
 
   const contentRef = useRef<HTMLDivElement>(null);
 
-  // Load from LocalStorage
   useEffect(() => {
     const savedDoc = localStorage.getItem('vox-doc-url');
     const savedAudio = localStorage.getItem('vox-audio-url');
@@ -25,7 +22,6 @@ export default function VoxReader() {
     if (savedAudio) setAudioUrl(savedAudio);
   }, []);
 
-  // Handle Loading Content
   const handleLoad = async () => {
     if (!docUrl) return;
     setLoading(true);
@@ -35,24 +31,21 @@ export default function VoxReader() {
     try {
       const res = await fetch(`/api/fetch-doc?url=${encodeURIComponent(docUrl)}`);
       const html = await res.text();
-      
       const parser = new DOMParser();
       const doc = parser.parseFromString(html, 'text/html');
-      const styleTags = doc.querySelectorAll('style');
-      styleTags.forEach(t => t.remove());
-      
+      doc.querySelectorAll('style, script, img').forEach(el => el.remove());
       const bodyContent = doc.querySelector('body')?.innerHTML || '';
       setContent(bodyContent);
       setIsSetup(false);
       setCurrentPage(0);
     } catch (err) {
-      alert('載入失敗，請確認網址是否已設定為公開檢視');
+      alert('載入失敗');
     } finally {
       setLoading(false);
     }
   };
 
-  // Calculate Total Pages
+  // 核心：利用 CSS Column 計算精準頁數
   useEffect(() => {
     if (!contentRef.current || isSetup) return;
     
@@ -61,12 +54,13 @@ export default function VoxReader() {
       if (el) {
         const totalW = el.scrollWidth;
         const viewW = el.clientWidth;
-        const pages = Math.max(1, Math.ceil(totalW / (viewW || 1)));
+        // 總頁數 = 總捲動寬度 / 視窗寬度
+        const pages = Math.max(1, Math.round(totalW / (viewW || 1)));
         setTotalPages(pages);
       }
     };
 
-    const timer = setTimeout(updatePages, 500);
+    const timer = setTimeout(updatePages, 300);
     window.addEventListener('resize', updatePages);
     return () => {
       clearTimeout(timer);
@@ -74,7 +68,6 @@ export default function VoxReader() {
     };
   }, [content, fontSize, isSetup]);
 
-  // Navigation Logic
   const goToPage = (page: number) => {
     const targetPage = Math.max(0, Math.min(totalPages - 1, page));
     setCurrentPage(targetPage);
@@ -86,36 +79,16 @@ export default function VoxReader() {
     }
   };
 
-  const navigate = (dir: 'next' | 'prev') => {
-    goToPage(dir === 'next' ? currentPage + 1 : currentPage - 1);
-  };
-
-  // Keyboard support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (isSetup) return;
-      if (e.key === 'ArrowRight' || e.key === ' ') {
-        e.preventDefault();
-        navigate('next');
-      }
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        navigate('prev');
-      }
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); goToPage(currentPage + 1); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); goToPage(currentPage - 1); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isSetup, totalPages, currentPage]);
 
-  const handleJump = () => {
-    const p = prompt(`跳轉頁碼 (1-${totalPages})`, (currentPage + 1).toString());
-    if (p) {
-      const pageNum = parseInt(p);
-      if (!isNaN(pageNum)) goToPage(pageNum - 1);
-    }
-  };
-
-  // Audio URL Converter
   const getDirectAudioUrl = (url: string) => {
     if (url.includes('drive.google.com')) {
       const id = url.match(/\/d\/(.+?)(\/|$)/)?.[1];
@@ -126,64 +99,53 @@ export default function VoxReader() {
 
   if (isSetup) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50">
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50 font-sans">
         <div className="w-full max-w-md bg-white p-8 rounded-2xl shadow-xl space-y-6">
-          <h1 className="text-3xl font-bold text-slate-800 text-center">VoxReader 閱聽助手</h1>
-          <div className="space-y-4">
-            <input 
-              type="text" value={docUrl} onChange={(e) => setDocUrl(e.target.value)}
-              placeholder="Google 文件連結..."
-              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
-            />
-            <input 
-              type="text" value={audioUrl} onChange={(e) => setAudioUrl(e.target.value)}
-              placeholder="Google Drive 音檔連結..."
-              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-700"
-            />
-          </div>
-          <button onClick={handleLoad} disabled={loading} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition disabled:bg-blue-300">
-            {loading ? '載入中...' : '開始視聽'}
-          </button>
+          <h1 className="text-2xl font-bold text-slate-800 text-center">VoxReader</h1>
+          <input type="text" value={docUrl} onChange={(e) => setDocUrl(e.target.value)} placeholder="Google Docs 連結" className="w-full p-3 border rounded-lg" />
+          <input type="text" value={audioUrl} onChange={(e) => setAudioUrl(e.target.value)} placeholder="音檔連結 (選填)" className="w-full p-3 border rounded-lg" />
+          <button onClick={handleLoad} disabled={loading} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold">{loading ? '載入中...' : '開始視聽'}</button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-stone-100 overflow-hidden select-none">
-      {/* Progress Bar */}
-      <div className="absolute top-0 left-0 h-1 bg-blue-500 transition-all duration-300 z-30" style={{ width: `${((currentPage + 1) / totalPages) * 100}%` }} />
+    <div className="fixed inset-0 flex flex-col bg-stone-100 overflow-hidden">
+      {/* 頁面頂部進度條 */}
+      <div className="absolute top-0 left-0 h-1 bg-blue-500 z-30 transition-all duration-300" style={{ width: `${((currentPage + 1) / totalPages) * 100}%` }} />
 
-      {/* Header */}
-      <div className="h-16 flex items-center justify-between px-6 bg-white border-b shadow-sm z-20">
-        <button onClick={() => setIsSetup(true)} className="text-slate-500 hover:text-slate-800 font-medium">← 返回</button>
-        <div className="flex items-center space-x-4">
-          <input type="range" min="16" max="72" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-24 sm:w-32 accent-blue-600" />
-        </div>
-        <button onClick={handleJump} className="text-slate-500 text-sm font-mono bg-slate-100 px-2 py-1 rounded hover:bg-slate-200">
-          {currentPage + 1} / {totalPages}
-        </button>
+      <div className="h-16 flex items-center justify-between px-6 bg-white border-b z-20">
+        <button onClick={() => setIsSetup(true)} className="text-slate-500 text-sm">← 返回</button>
+        <input type="range" min="16" max="60" value={fontSize} onChange={(e) => setFontSize(parseInt(e.target.value))} className="w-24 accent-blue-600" />
+        <div className="text-slate-500 text-xs font-mono">{currentPage + 1} / {totalPages}</div>
       </div>
 
-      {/* Reader Area */}
-      <div className="flex-1 relative overflow-hidden" onClick={(e) => {
-           const width = window.innerWidth;
-           if (e.clientX > width * 0.75) navigate('next');
-           if (e.clientX < width * 0.25) navigate('prev');
-        }}>
-        <div ref={contentRef} className="h-full w-full overflow-hidden transition-all duration-300 ease-in-out"
-          style={{ 
-            columnWidth: '100vw', columnGap: '0px', columnFill: 'auto',
-            fontSize: `${fontSize}px`, lineHeight: '1.8', padding: '40px 10%', wordBreak: 'break-word'
-          }}
-          dangerouslySetInnerHTML={{ __html: content }}
-        />
+      {/* 閱讀主體：CSS Column 佈局 */}
+      <div className="flex-1 relative overflow-hidden" 
+           onClick={(e) => {
+             const x = e.clientX;
+             const w = window.innerWidth;
+             if (x > w * 0.7) goToPage(currentPage + 1);
+             if (x < w * 0.3) goToPage(currentPage - 1);
+           }}>
+        <div ref={contentRef} 
+             className="h-full w-full overflow-hidden transition-all duration-500 ease-in-out"
+             style={{ 
+               columnWidth: '100vw',
+               columnGap: '0px',
+               columnFill: 'auto',
+               fontSize: `${fontSize}px`, 
+               lineHeight: '1.8',
+               padding: '40px 10%',
+               color: '#2d3748'
+             }}
+             dangerouslySetInnerHTML={{ __html: content }} />
       </div>
 
-      {/* Footer Player */}
       {audioUrl && (
-        <div className="h-24 bg-white border-t flex items-center justify-center px-4 shadow-lg z-20">
-          <audio controls src={getDirectAudioUrl(audioUrl)} className="w-full max-w-3xl" />
+        <div className="h-20 bg-white border-t flex items-center justify-center px-4 z-20">
+          <audio controls src={getDirectAudioUrl(audioUrl)} className="w-full max-w-2xl h-8" />
         </div>
       )}
     </div>
