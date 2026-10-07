@@ -341,7 +341,7 @@ export default function VoxReader() {
       const shouldPoll = role === 'controller' || !dualRef.current;
       if (!shouldPoll) return;
       try {
-        const r = await fetch(`/api/ctrl?since=${since}`);
+        const r = await fetch(`/api/ctrl?key=vox-reader&since=${since}`);
         if (!r.ok) return;
         const d = await r.json();
         (d.acts || []).forEach((a: { id: number; action: string }) => {
