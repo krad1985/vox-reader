@@ -4,6 +4,14 @@ import React, { useState, useEffect, useRef } from 'react';
 
 type ViewMode = 'reader' | 'presenter' | 'overlay' | 'controller';
 
+const getDirectAudioUrl = (url: string) => {
+  if (url.includes('drive.google.com')) {
+    const id = url.match(/\/d\/(.+?)(\/|$)/)?.[1];
+    return id ? `https://drive.google.com/uc?export=download&id=${id}` : url;
+  }
+  return url;
+};
+
 export default function VoxReader() {
   // --- Core States ---
   const [docUrl, setDocUrl] = useState('');
