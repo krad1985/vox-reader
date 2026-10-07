@@ -112,7 +112,7 @@ export default function VoxReader() {
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-100 font-sans">
         <div className="w-full max-w-3xl bg-white p-10 rounded-[2.5rem] shadow-2xl space-y-8">
           <div className="text-center space-y-2">
-            <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro</h1>
+            <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro v2.1</h1>
             <p className="text-slate-400 text-sm font-bold uppercase tracking-[0.3em]">Audio Visual Integration System</p>
           </div>
           
