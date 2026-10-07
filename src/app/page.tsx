@@ -59,10 +59,10 @@ export default function VoxReader() {
       const target = doc.querySelector('#contents') || doc.body;
       target.querySelectorAll('style, script, img, iframe').forEach(el => el.remove());
       
-      const rawLines = target.innerText
+      const rawLines = ((target as HTMLElement).innerText || target.textContent || "")
         .split(/[。\n！？]/)
-        .map(l => l.trim())
-        .filter(l => l.length > 1);
+        .map((l: string) => l.trim())
+        .filter((l: string) => l.length > 1);
       
       setLines(rawLines);
       
