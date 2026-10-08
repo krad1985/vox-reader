@@ -577,12 +577,12 @@ export default function VoxReader() {
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase">Google 文件連結 *</label>
                 <input type="text" value={docUrl} onChange={e => setDocUrl(e.target.value)} placeholder="https://docs.google.com/..."
-                  className="w-full mt-1 p-4 bg-slate-50 rounded-2xl outline-none border-2 border-transparent focus:border-blue-500" />
+                  className="w-full mt-1 p-4 bg-slate-50 rounded-2xl outline-none border-2 border-transparent focus:border-blue-500 text-slate-900 placeholder:text-slate-400" />
               </div>
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase">音檔連結（閱覽模式底部列）</label>
                 <input type="text" value={audioUrl} onChange={e => setAudioUrl(e.target.value)} placeholder="mp3 / Google Drive 連結"
-                  className="w-full mt-1 p-4 bg-slate-50 rounded-2xl outline-none" />
+                  className="w-full mt-1 p-4 bg-slate-50 rounded-2xl outline-none text-slate-900 placeholder:text-slate-400" />
               </div>
 
               {mode === 'presenter' && (
