@@ -809,7 +809,7 @@ export default function VoxReader() {
             <div className="absolute inset-0 bg-black/30 z-10" />
             <div className={`absolute z-20 transition-opacity duration-500 ${hide ? 'opacity-0' : 'opacity-100'}`}
               style={{ width: `${presW}%`, height: `${presH}%`, left: '50%', transform: 'translateX(-50%)', bottom: barVisible ? '100px' : '5%' }}>
-              <div className="w-full h-full bg-black/60 backdrop-blur-3xl p-8 rounded-[4rem] border border-white/10 flex items-center justify-center shadow-[0_30px_100px_rgba(0,0,0,0.5)]">
+              <div className="w-full h-full bg-black/60 backdrop-blur-3xl px-10 py-6 border-t border-b border-white/10 flex items-center justify-center shadow-[0_30px_100px_rgba(0,0,0,0.5)]">
                 <div className="text-white font-black text-center leading-tight" style={{ fontSize: `${fontSize * 2}px` }}>{lines[idx]}</div>
               </div>
             </div>
