@@ -11,6 +11,8 @@ type SyncState = {
   cd: number | null; next: string; mode: Mode;
 };
 
+type Payload = { content: string; lines: string[]; subs: string[]; starts: number[] };
+
 const MODE_META: Record<Mode, { title: string; desc: string; icon: string }> = {
   reader: { title: '閱覽模式', desc: '研讀用。直向捲動閱讀、可調字級與版寬、底部音檔列。', icon: '📖' },
   presenter: { title: '講師模式', desc: '投影用。講師背景圖＋毛玻璃字幕框，框寬高可調。', icon: '🖥️' },
@@ -39,10 +41,9 @@ const fmtCd = (s: number) => {
 
 export default function VoxReader() {
   // 角色：display（預設單螢幕） / controller（控制端，/?mode=controller）
-  const [role] = useState<'display' | 'controller'>(
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mode') === 'controller'
-      ? 'controller' : 'display'
-  );
+  // 伺服器與首次渲染一律 display，掛載後才讀取 query —— 避免 SSR/CSR 不一致（React #418）
+  const [role, setRole] = useState<'display' | 'controller'>('display');
+  const roleRef = useRef<'display' | 'controller'>('display');
 
   const [stage, setStage] = useState<Stage>('mode');
   const [mode, setMode] = useState<Mode>('presenter');
@@ -74,6 +75,10 @@ export default function VoxReader() {
 
   // 雙螢幕偵測（controller 心跳）
   const [dual, setDual] = useState(false);
+  // 使用者手動切回單螢幕：忽略 controller 心跳（直到再次點「切換雙螢幕」）
+  const [dualOff, setDualOff] = useState(false);
+  // boot 完成後才寫 session，避免 boot 前的初始 state 蓄掉上次 session
+  const [ready, setReady] = useState(false);
 
   // Refs
   const bc = useRef<BroadcastChannel | null>(null);
@@ -90,7 +95,8 @@ export default function VoxReader() {
   const lastHelloRef = useRef(0);
   const stageRef = useRef<Stage>('mode');
   const dualRef = useRef(false);
-  const contentRef = useRef({ content: '', lines: [] as string[], subs: [] as string[], starts: [] as number[] });
+  const dualOffRef = useRef(false);
+  const contentRef = useRef<Payload>({ content: '', lines: [], subs: [], starts: [] });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const send = (msg: Record<string, unknown>) => bc.current?.postMessage({ ...msg, src: tabId.current });
@@ -107,6 +113,32 @@ export default function VoxReader() {
     if (c.lines.length) send({ t: 'CONTENT', payload: c });
   };
 
+  // ===== 內容快取（重新整理不求 Google，直接回播放） =====
+  const readCache = (): { url: string; payload: Payload } | null => {
+    try {
+      const raw = localStorage.getItem('vox-cache');
+      if (!raw) return null;
+      const c = JSON.parse(raw);
+      return c && c.payload && Array.isArray(c.payload.lines) && c.payload.lines.length ? c : null;
+    } catch { return null; }
+  };
+  const writeCache = (url: string, payload: Payload) => {
+    if (!url) return;
+    try { localStorage.setItem('vox-cache', JSON.stringify({ url, payload })); } catch { /* quota exceeded */ }
+  };
+  const applyPayload = (p: Payload, at = 0) => {
+    contentRef.current = p;
+    startsRef.current = p.starts;
+    linesLenRef.current = p.lines.length;
+    const i = Math.max(0, Math.min(at, p.lines.length - 1));
+    idxRef.current = i;
+    subRef.current = p.starts[i] ?? 0;
+    setContent(p.content); setLines(p.lines); setSubs(p.subs);
+    setIdx(i); setSub(subRef.current);
+    setErrMsg('');
+    setStage('play');
+  };
+
   // ===== BroadcastChannel =====
   useEffect(() => {
     bc.current = new BroadcastChannel('vox_reader_v3');
@@ -116,8 +148,9 @@ export default function VoxReader() {
       if (m.t === 'HELLO') { lastHelloRef.current = Date.now(); return; }
       if (m.t === 'REQ') { if (role === 'controller') sendContent(); return; }
       if (m.t === 'CONTENT') {
-        const p = m.payload;
+        const p: Payload = m.payload;
         contentRef.current = p;
+        writeCache(localStorage.getItem('vox-doc-url') || '', p);
         startsRef.current = p.starts;
         linesLenRef.current = p.lines.length;
         setContent(p.content); setLines(p.lines); setSubs(p.subs);
@@ -134,6 +167,12 @@ export default function VoxReader() {
         modeRef.current = p.mode;
         setIdx(p.idx); setSub(p.sub); setHide(p.hide);
         setDisc(p.disc); setCd(p.cd); setNextClass(p.next); setMode(p.mode);
+        return;
+      }
+      if (m.t === 'CLOSE_CTRL') {
+        // 投影端要求控制端退回設定畫面（停止心跳與輪詢）
+        try { window.close(); } catch { /* popup/直開視窗無法自關 */ }
+        setTimeout(() => { setStage('setup'); }, 100);
       }
     };
     return () => bc.current?.close();
@@ -150,7 +189,8 @@ export default function VoxReader() {
   useEffect(() => {
     if (role !== 'display') return;
     const iv = setInterval(() => {
-      const on = Date.now() - lastHelloRef.current < 2600;
+      // dualOff：使用者手動切回單螢幕後，忽略 controller 心跳直到再次開啟
+      const on = !dualOffRef.current && Date.now() - lastHelloRef.current < 2600;
       setDual(prev => prev !== on ? on : prev);
       dualRef.current = on;
     }, 800);
@@ -162,6 +202,7 @@ export default function VoxReader() {
     hideRef.current = hide; discRef.current = disc; cdRef.current = cd;
     nextRef.current = nextClass; modeRef.current = mode;
     stageRef.current = stage; dualRef.current = dual;
+    dualOffRef.current = dualOff;
   });
 
   // 時鐘
@@ -193,15 +234,57 @@ export default function VoxReader() {
   useEffect(() => {
     if (bootedRef.current) return;
     bootedRef.current = true;
-    if (role === 'controller') {
-      const u = localStorage.getItem('vox-doc-url');
-      if (u) { setDocUrl(u); loadDoc(u); }
-      else setStage('setup');
+
+    // 1) 角色：掛載後才讀 query（SSR 一律 display，避免 React #418）
+    const isCtrl = new URLSearchParams(window.location.search).get('mode') === 'controller';
+    if (isCtrl) { roleRef.current = 'controller'; setRole('controller'); }
+
+    // 2) 上次 session（stage / mode / idx）
+    let ses: { stage?: Stage; mode?: Mode; idx?: number } = {};
+    try { ses = JSON.parse(sessionStorage.getItem('vox-session') || '{}'); } catch { /* corrupted */ }
+    if (ses.mode === 'reader' || ses.mode === 'presenter' || ses.mode === 'overlay') {
+      modeRef.current = ses.mode; setMode(ses.mode);
     }
+
+    // 3) 文件網址（localStorage 已由另一 effect 同步到 state）
+    const url = localStorage.getItem('vox-doc-url') || '';
+
+    // 4) 有快取且 stage 曾是 play → 直接還原，不打 /api/fetch-doc
+    const cache = readCache();
+    if (cache && cache.url === url && ses.stage === 'play') {
+      applyPayload(cache.payload, ses.idx ?? 0);
+      setReady(true);
+      setTimeout(sendContent, 50);
+      return;
+    }
+
+    // 5) 無可還原 session：controller 自動載入上次文件，否則回設定
+    if (isCtrl) {
+      if (url) { setDocUrl(url); loadDoc(url); }
+      else setStage('setup');
+    } else if (ses.stage === 'setup') {
+      setStage('setup');
+    }
+    setReady(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // session 持久化（boot 完成後才寫，避免覆掉上次 session）
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      sessionStorage.setItem('vox-session', JSON.stringify({ stage, mode, idx }));
+    } catch { /* storage full */ }
+  }, [ready, stage, mode, idx]);
+
   // ===== 內容載入 =====
+  // 有快取就用快取回播放（fetch 失敗不擋路），沒有才顯示錯誤
+  const failOrCache = (url: string, msg: string) => {
+    const c = readCache();
+    if (c && c.url === url) { applyPayload(c.payload, 0); setLoading(false); return; }
+    setErrMsg(msg); setLoading(false);
+  };
+
   const loadDoc = async (url: string) => {
     if (!url) return;
     setLoading(true); setErrMsg('');
@@ -214,11 +297,11 @@ export default function VoxReader() {
         // API 回了 JSON 錯誤，不是 HTML
         let msg = '讀取失敗';
         try { msg = JSON.parse(rawText).error || msg; } catch { /* keep */ }
-        setErrMsg(msg); setLoading(false); return;
+        failOrCache(url, msg); return;
       }
       const doc = new DOMParser().parseFromString(rawText, 'text/html');
       const target = (doc.querySelector('#contents') || doc.body) as HTMLElement;
-      if (!target) { setErrMsg('文件內容為空'); setLoading(false); return; }
+      if (!target) { failOrCache(url, '文件內容為空'); return; }
 
       const text = target.innerText || target.textContent || '';
       const sentences = text.split(/[。\n！？]/).map(l => l.trim()).filter(l => l.length > 1);
@@ -235,17 +318,12 @@ export default function VoxReader() {
       });
       const safeHtml = target.innerHTML; // DOMParser 已自動補閉合標籤
 
-      const payload = { content: safeHtml, lines: sentences, subs: flat, starts };
-      contentRef.current = payload;
-      startsRef.current = starts;
-      linesLenRef.current = sentences.length;
-      idxRef.current = 0; subRef.current = 0;
-      setContent(safeHtml); setLines(sentences); setSubs(flat);
-      setIdx(0); setSub(0);
-      setStage('play');
-      if (role === 'controller') setTimeout(sendContent, 50);
+      const payload: Payload = { content: safeHtml, lines: sentences, subs: flat, starts };
+      writeCache(url, payload);
+      applyPayload(payload, 0);
+      setTimeout(sendContent, 50);
     } catch {
-      setErrMsg('載入發生例外，請檢查連結');
+      failOrCache(url, '載入發生例外，請檢查連結');
     } finally {
       setLoading(false);
     }
@@ -419,6 +497,14 @@ export default function VoxReader() {
           ))}
         </div>
         {role === 'controller' && <p className="text-xs text-red-400 font-bold">控制端需要先在顯示端設定文件，或於下一步輸入連結。</p>}
+        {errMsg && (
+          <div className="max-w-lg p-4 bg-red-50 border border-red-200 rounded-2xl text-sm text-red-600 font-bold leading-relaxed text-left">
+            {errMsg}
+            <div className="text-[11px] text-red-400 mt-1 font-normal">
+              常見原因：文件分享權限不足。請設為「知道連結的檢視者」，若文件勾選了「禁止檢視者下載/列印」會被 Google 拒絕（401）。
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -737,9 +823,13 @@ export default function VoxReader() {
           <button onClick={setClassSync} className={`px-3 py-1.5 rounded-lg ${disc === 'class' ? 'bg-blue-600' : 'bg-white/10 hover:bg-white/20'}`}>上課</button>
           <button onClick={() => setDiscSync('clock')} className={`px-3 py-1.5 rounded-lg ${disc === 'clock' ? 'bg-blue-600' : 'bg-white/10 hover:bg-white/20'}`}>時鐘</button>
           <button onClick={() => setDiscSync('none')} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">關閉 Esc</button>
-          <button onClick={() => { persist(); window.open('/?mode=controller', '_blank'); }}
-            className={`px-3 py-1.5 rounded-lg ${dual ? 'bg-emerald-600' : 'bg-emerald-700 hover:bg-emerald-600'}`}>
-            {dual ? '雙螢幕控制中 ●' : '切換雙螢幕 ↗'}
+          <button onClick={() => {
+            persist();
+            setDualOff(false); dualOffRef.current = false;
+            window.open('/?mode=controller', '_blank');
+          }}
+            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600">
+            切換雙螢幕
           </button>
         </div>
       </div>
@@ -749,6 +839,24 @@ export default function VoxReader() {
         <div className="shrink-0 h-14 bg-white border-t flex items-center justify-center px-4 z-40">
           <audio controls src={getDirectAudioUrl(audioUrl)} className="w-full max-w-3xl h-9" />
         </div>
+      )}
+
+      {/* 雙螢幕開啟中：角落低調圖示（不投影干擾），點擊切回單螢幕控制列 */}
+      {dual && (
+        <button
+          onClick={() => {
+            setDualOff(true); dualOffRef.current = true;
+            setDual(false); dualRef.current = false;
+            send({ t: 'CLOSE_CTRL' });
+          }}
+          title="切回單螢幕控制"
+          className="fixed right-2 bottom-2 z-[60] p-1.5 rounded-md bg-black/40 text-white/40 hover:text-white hover:bg-black/70 opacity-40 hover:opacity-100 transition">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="2" y="4" width="20" height="13" rx="2" />
+            <path d="M8 21h8" />
+            <path d="M12 17v4" />
+          </svg>
+        </button>
       )}
     </div>
   );
