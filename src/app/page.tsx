@@ -116,7 +116,8 @@ export default function VoxReader() {
   // ===== 內容快取（重新整理不求 Google，直接回播放） =====
   const readCache = (): { url: string; payload: Payload } | null => {
     try {
-      const raw = localStorage.getItem('vox-cache');
+      // v2：v1 快取可能含 script/style 污染的句子，作廢
+      const raw = localStorage.getItem('vox-cache-v2');
       if (!raw) return null;
       const c = JSON.parse(raw);
       return c && c.payload && Array.isArray(c.payload.lines) && c.payload.lines.length ? c : null;
@@ -124,7 +125,7 @@ export default function VoxReader() {
   };
   const writeCache = (url: string, payload: Payload) => {
     if (!url) return;
-    try { localStorage.setItem('vox-cache', JSON.stringify({ url, payload })); } catch { /* quota exceeded */ }
+    try { localStorage.setItem('vox-cache-v2', JSON.stringify({ url, payload })); } catch { /* quota exceeded */ }
   };
   const applyPayload = (p: Payload, at = 0) => {
     contentRef.current = p;
@@ -300,22 +301,49 @@ export default function VoxReader() {
         failOrCache(url, msg); return;
       }
       const doc = new DOMParser().parseFromString(rawText, 'text/html');
-      const target = (doc.querySelector('#contents') || doc.body) as HTMLElement;
+
+      // 先移除 script/style 等：DOMParser 未渲染文件的 innerText 等同 textContent，
+      // 不先移除會把 JS/CSS 原始碼混進句子（講師/字幕模式顯示出程式碼）
+      doc.querySelectorAll('script, style, link, meta, iframe, object, embed, noscript, form, input, img, svg').forEach(el => el.remove());
+
+      // 容器：#contents（舊版 export）→ .doc-content（export?format=html）→ .doc（mobilebasic）→ body
+      const target = (doc.querySelector('#contents')
+        || doc.querySelector('.doc-content')
+        || doc.querySelector('.doc')
+        || doc.body) as HTMLElement;
       if (!target) { failOrCache(url, '文件內容為空'); return; }
 
-      const text = target.innerText || target.textContent || '';
-      const sentences = text.split(/[。\n！？]/).map(l => l.trim()).filter(l => l.length > 1);
-      const flat: string[] = []; const starts: number[] = [];
-      sentences.forEach(s => { starts.push(flat.length); flat.push(...chunkText(s)); });
-
-      // 消毒：移除危險/無關標籤與屬性，再重新序列化（保證標籤封閉）
-      target.querySelectorAll('script, style, link, meta, iframe, object, embed, form, input, img, svg, noscript').forEach(el => el.remove());
+      // 屬性消毒：移除危險/無關屬性，重新序列化（保證標籤封閉）
       target.querySelectorAll('*').forEach(el => {
         const e = el as HTMLElement;
         e.removeAttribute('style'); e.removeAttribute('class'); e.removeAttribute('id');
         // 去掉 on* 事件屬性
         Array.from(e.attributes).forEach(a => { if (/^on/i.test(a.name)) e.removeAttribute(a.name); });
       });
+
+      // 逐塊抽文字：textContent 不含段落邊界，會把整篇黏成一句
+      const BLOCKS = new Set(['P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BR', 'TR', 'BLOCKQUOTE', 'PRE', 'UL', 'OL']);
+      const extractText = (root: Node): string => {
+        let out = '';
+        const walk = (n: Node) => {
+          if (n.nodeType === Node.TEXT_NODE) { out += n.nodeValue ?? ''; return; }
+          if (n.nodeType !== Node.ELEMENT_NODE) return;
+          const el = n as HTMLElement;
+          if (el.tagName === 'BR') { out += '\n'; return; }
+          const block = BLOCKS.has(el.tagName);
+          if (block) out += '\n';
+          el.childNodes.forEach(walk);
+          if (block) out += '\n';
+        };
+        walk(root);
+        return out;
+      };
+
+      const text = extractText(target).replace(/ /g, ' ');
+      const sentences = text.split(/[。\n！？]/).map(l => l.trim()).filter(l => l.length > 1);
+      const flat: string[] = []; const starts: number[] = [];
+      sentences.forEach(s => { starts.push(flat.length); flat.push(...chunkText(s)); });
+
       const safeHtml = target.innerHTML; // DOMParser 已自動補閉合標籤
 
       const payload: Payload = { content: safeHtml, lines: sentences, subs: flat, starts };

@@ -24,10 +24,12 @@ export async function GET(request: Request) {
     // 如果使用者直接提供發佈連結，優先使用
     urlsToTry = [inputUrl];
   } else {
-    // 否則嘗試各種匯出路徑
+    // 否則嘗試各種匯出路徑。
+    // export?format=html 最乾淨（無 script、body 直接是內容）優先；
+    // mobilebasic 含大量 script/style 作為備援。
     urlsToTry = [
-      `https://docs.google.com/document/d/${docId}/mobilebasic`,
       `https://docs.google.com/document/d/${docId}/export?format=html`,
+      `https://docs.google.com/document/d/${docId}/mobilebasic`,
       `https://docs.google.com/document/d/${docId}/pub`
     ];
   }
