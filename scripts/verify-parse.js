@@ -27,11 +27,27 @@ const BASE = 'https://vox-reader-alpha.vercel.app';
       Array.from(el.attributes).forEach(a => { if (/^on/i.test(a.name)) el.removeAttribute(a.name); });
     });
     const text = extractText(target).replace(/ /g, ' ');
-    const sentences = text.split(/[。\n！？]/).map(l => l.trim()).filter(l => l.length > 1);
+    const sentences = text
+      .replace(/([。！？．!?]+[」』）〕》”"』〕]*)/g, '$1\n')
+      .split(/\n+/)
+      .map(l => l.trim())
+      .filter(l => l.length > 1);
     const flat = []; const starts = [];
-    const chunk = (s, n = 16) => { const o = []; for (let i = 0; i < s.length; i += n) o.push(s.slice(i, i + n)); return o; };
+    const chunk = (s, n = 16) => {
+      const out = []; let start = 0;
+      while (start < s.length) {
+        if (s.length - start <= n + 6) { out.push(s.slice(start)); break; }
+        let cut = -1;
+        const hi = Math.min(s.length, start + n + 6);
+        const lo = start + Math.max(4, n - 4);
+        for (let j = hi; j > lo; j--) { if ('，、；：,;：'.includes(s[j - 1])) { cut = j; break; } }
+        if (cut === -1) cut = start + n;
+        out.push(s.slice(start, cut)); start = cut;
+      }
+      return out;
+    };
     sentences.forEach(s => { starts.push(flat.length); flat.push(...chunk(s)); });
-    return { n: sentences.length, first5: sentences.slice(0, 5), safeHtmlHead: target.innerHTML.slice(0, 300) };
+    return { n: sentences.length, first5: sentences.slice(0, 5), firstChunks: flat.slice(0, 6), safeHtmlHead: target.innerHTML.slice(0, 300) };
     function extractText(root) {
       const BLOCKS = new Set(['P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BR', 'TR', 'BLOCKQUOTE', 'PRE', 'UL', 'OL']);
       let out = '';
@@ -53,6 +69,7 @@ const BASE = 'https://vox-reader-alpha.vercel.app';
   if (out.err) { console.log('FAIL', out.err); process.exit(1); }
   console.log(`sentences=${out.n}`);
   console.log('first5:', JSON.stringify(out.first5, null, 1));
+  console.log('chunks:', JSON.stringify(out.firstChunks, null, 1));
 
   // 程式碼污染檢測
   const bad = (out.first5 || []).filter(s =>

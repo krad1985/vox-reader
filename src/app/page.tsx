@@ -16,7 +16,7 @@ type Payload = { content: string; lines: string[]; subs: string[]; starts: numbe
 const MODE_META: Record<Mode, { title: string; desc: string; icon: string }> = {
   reader: { title: '閱覽模式', desc: '研讀用。直向捲動閱讀、可調字級與版寬、底部音檔列。', icon: '📖' },
   presenter: { title: '講師模式', desc: '投影用。講師背景圖＋毛玻璃字幕框，框寬高可調。', icon: '🖥️' },
-  overlay: { title: '字幕模式', desc: '導播用。綠幕/黑幕單行字幕，每行固定 13–18 字。', icon: '🎞️' },
+  overlay: { title: '字幕模式', desc: '導播用。綠幕/黑幕單行字幕，約 13–18 字自動於標點斷行，位置高低可調。', icon: '🎞️' },
 };
 
 const getDirectAudioUrl = (url: string) => {
@@ -29,7 +29,20 @@ const getDirectAudioUrl = (url: string) => {
 
 const chunkText = (s: string, n = 16): string[] => {
   const out: string[] = [];
-  for (let i = 0; i < s.length; i += n) out.push(s.slice(i, i + n));
+  let start = 0;
+  while (start < s.length) {
+    if (s.length - start <= n + 6) { out.push(s.slice(start)); break; }
+    // 在目標長度附近找逗號類標點，於其後斷，避免硬切詞語中間
+    let cut = -1;
+    const hi = Math.min(s.length, start + n + 6);
+    const lo = start + Math.max(4, n - 4);
+    for (let j = hi; j > lo; j--) {
+      if ('，、；：,;：'.includes(s[j - 1])) { cut = j; break; }
+    }
+    if (cut === -1) cut = start + n;
+    out.push(s.slice(start, cut));
+    start = cut;
+  }
   return out;
 };
 
@@ -58,6 +71,8 @@ export default function VoxReader() {
   const [presH, setPresH] = useState(30);
   const [overlayPos, setOverlayPos] = useState<'top' | 'bottom'>('bottom');
   const [overlayBg, setOverlayBg] = useState('#00FF00');
+  // 離邊距離（%）：字幕位置微調，取代原本固定的 80/130px
+  const [overlayOffset, setOverlayOffset] = useState(6);
 
   // 播放
   const [content, setContent] = useState('');
@@ -116,8 +131,8 @@ export default function VoxReader() {
   // ===== 內容快取（重新整理不求 Google，直接回播放） =====
   const readCache = (): { url: string; payload: Payload } | null => {
     try {
-      // v2：v1 快取可能含 script/style 污染的句子，作廢
-      const raw = localStorage.getItem('vox-cache-v2');
+      // v3：v2 快取的句子缺句末標點、字幕硬切 16 字，作廢
+      const raw = localStorage.getItem('vox-cache-v3');
       if (!raw) return null;
       const c = JSON.parse(raw);
       return c && c.payload && Array.isArray(c.payload.lines) && c.payload.lines.length ? c : null;
@@ -125,7 +140,7 @@ export default function VoxReader() {
   };
   const writeCache = (url: string, payload: Payload) => {
     if (!url) return;
-    try { localStorage.setItem('vox-cache-v2', JSON.stringify({ url, payload })); } catch { /* quota exceeded */ }
+    try { localStorage.setItem('vox-cache-v3', JSON.stringify({ url, payload })); } catch { /* quota exceeded */ }
   };
   const applyPayload = (p: Payload, at = 0) => {
     contentRef.current = p;
@@ -228,6 +243,7 @@ export default function VoxReader() {
     setFontSize(parseInt(localStorage.getItem('vox-font-size') || '24'));
     setPresW(parseInt(localStorage.getItem('vox-pres-w') || '90'));
     setPresH(parseInt(localStorage.getItem('vox-pres-h') || '30'));
+    setOverlayOffset(parseInt(localStorage.getItem('vox-overlay-offset') || '6'));
   }, []);
 
   // 控制端啟動：直接載入上次文件
@@ -339,8 +355,13 @@ export default function VoxReader() {
         return out;
       };
 
-      const text = extractText(target).replace(/ /g, ' ');
-      const sentences = text.split(/[。\n！？]/).map(l => l.trim()).filter(l => l.length > 1);
+      const text = extractText(target).replace(/ /g, ' ');
+      // 斷句：句末標點（含疊加與收尾引號）連同標點留在句尾，再於標點後斷開
+      const sentences = text
+        .replace(/([。！？．!?]+[」』）〕》”"』〕]*)/g, '$1\n')
+        .split(/\n+/)
+        .map(l => l.trim())
+        .filter(l => l.length > 1);
       const flat: string[] = []; const starts: number[] = [];
       sentences.forEach(s => { starts.push(flat.length); flat.push(...chunkText(s)); });
 
@@ -498,6 +519,7 @@ export default function VoxReader() {
     localStorage.setItem('vox-content-width', String(contentWidth));
     localStorage.setItem('vox-pres-w', String(presW));
     localStorage.setItem('vox-pres-h', String(presH));
+    localStorage.setItem('vox-overlay-offset', String(overlayOffset));
   };
 
   // ===== 控制端控制列（Companion 對接說明） =====
@@ -510,7 +532,7 @@ export default function VoxReader() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[#f0f2f5] font-sans gap-8">
         <div className="text-center">
-          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro <span className="text-blue-500">v3.0</span></h1>
+          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro <span className="text-blue-500">v3.2</span></h1>
           <p className="text-slate-400 font-bold mt-2 text-sm">Step 1 / 2 — 選擇這次要用的模式</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
@@ -545,7 +567,7 @@ export default function VoxReader() {
           <div className="px-12 pt-10 pb-4">
             <button onClick={() => setStage('mode')} className="text-xs font-black text-slate-400 hover:text-blue-600">← Step 1 重選模式</button>
             <h1 className="text-3xl font-black text-slate-800 tracking-tighter italic mt-3">
-              {MODE_META[mode].title} <span className="text-blue-500 text-lg align-middle">v3.0</span>
+              {MODE_META[mode].title} <span className="text-blue-500 text-lg align-middle">v3.2</span>
             </h1>
             <p className="text-slate-400 font-bold mt-1 text-sm">Step 2 / 2 — 設定內容與版面</p>
           </div>
@@ -582,6 +604,10 @@ export default function VoxReader() {
                       <button onClick={() => setOverlayPos('bottom')} className={`flex-1 p-3 rounded-xl text-xs font-black ${overlayPos === 'bottom' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}>置底</button>
                       <button onClick={() => setOverlayPos('top')} className={`flex-1 p-3 rounded-xl text-xs font-black ${overlayPos === 'top' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}>置頂</button>
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase">高低（離{overlayPos === 'bottom' ? '底' : '頂'}邊 {overlayOffset}%）</label>
+                    <input type="range" min="0" max="45" value={overlayOffset} onChange={e => setOverlayOffset(parseInt(e.target.value))} className="w-full mt-1 accent-blue-600" />
                   </div>
                   <div>
                     <label className="text-[10px] font-black text-slate-400 uppercase">背景色（綠幕/黑幕）</label>
@@ -662,7 +688,7 @@ export default function VoxReader() {
     return (
       <div className="min-h-screen bg-slate-900 text-white p-6 md:p-8 flex flex-col space-y-5 select-none font-sans">
         <div className="flex justify-between items-center">
-          <h1 className="text-xl font-black tracking-tighter italic">VOX <span className="text-blue-500">CONTROLLER</span> <span className="text-[9px] text-slate-600 ml-2">v3.0</span></h1>
+          <h1 className="text-xl font-black tracking-tighter italic">VOX <span className="text-blue-500">CONTROLLER</span> <span className="text-[9px] text-slate-600 ml-2">v3.2</span></h1>
           <div className="flex items-center space-x-6">
             {nextClass && (
               <div className="text-right">
@@ -700,7 +726,6 @@ export default function VoxReader() {
               {(['presenter', 'overlay', 'reader'] as Mode[]).map(m => (
                 <button key={m} onClick={() => switchMode(m)} className={`px-4 py-2 rounded-xl text-xs font-black ${mode === m ? 'bg-blue-600' : 'bg-slate-800 hover:bg-slate-700'}`}>{MODE_META[m].title}</button>
               ))}
-              <button onClick={() => setDiscSync('clock')} className={`px-4 py-2 rounded-xl text-xs font-black ${disc === 'clock' ? 'bg-blue-600' : 'bg-slate-800'}`}>時鐘</button>
               <button onClick={() => setDiscSync('none')} className="px-4 py-2 rounded-xl text-xs font-black bg-slate-800 hover:bg-slate-700">關閉覆蓋 Esc</button>
             </div>
 
@@ -792,8 +817,8 @@ export default function VoxReader() {
         )}
 
         {mode === 'overlay' && (
-          <div className={`h-full flex flex-col px-10 ${overlayPos === 'bottom' ? 'justify-end' : 'justify-start'} ${hide ? 'opacity-0' : 'opacity-100'}`}
-            style={overlayPos === 'bottom' ? { paddingBottom: barVisible ? 130 : 80 } : { paddingTop: 80 }}>
+          <div className={`absolute inset-x-0 px-10 transition-opacity duration-500 ${hide ? 'opacity-0' : 'opacity-100'}`}
+            style={{ [overlayPos === 'bottom' ? 'bottom' : 'top']: `${overlayOffset}%` }}>
             <div className="text-center font-black text-white whitespace-nowrap overflow-hidden"
               style={{ fontSize: `${fontSize * 2}px`, textShadow: '4px 4px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000' }}>
               {subs[sub] ?? ''}
@@ -836,7 +861,12 @@ export default function VoxReader() {
           )}
 
           {mode === 'overlay' && (
-            <button onClick={() => setOverlayPos(p => p === 'bottom' ? 'top' : 'bottom')} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">字幕{overlayPos === 'bottom' ? '置底' : '置頂'}</button>
+            <div className="flex items-center gap-2 bg-white/10 rounded-lg px-3">
+              <button onClick={() => setOverlayPos(p => p === 'bottom' ? 'top' : 'bottom')} className="px-2 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">字幕{overlayPos === 'bottom' ? '置底' : '置頂'}</button>
+              <span className="text-white/50">高低</span>
+              <input type="range" min="0" max="45" value={overlayOffset} onChange={e => setOverlayOffset(parseInt(e.target.value))} className="w-20 accent-blue-500" />
+              <span className="w-7 text-center tabular-nums">{overlayOffset}%</span>
+            </div>
           )}
 
           {mode !== 'reader' && (
@@ -849,7 +879,6 @@ export default function VoxReader() {
           <button onClick={toggleHide} className={`px-3 py-1.5 rounded-lg ${hide ? 'bg-red-600' : 'bg-white/10 hover:bg-white/20'}`}>黑屏 B</button>
           <button onClick={startCountdown} className={`px-3 py-1.5 rounded-lg ${disc === 'countdown' ? 'bg-blue-600' : 'bg-white/10 hover:bg-white/20'}`}>倒數</button>
           <button onClick={setClassSync} className={`px-3 py-1.5 rounded-lg ${disc === 'class' ? 'bg-blue-600' : 'bg-white/10 hover:bg-white/20'}`}>上課</button>
-          <button onClick={() => setDiscSync('clock')} className={`px-3 py-1.5 rounded-lg ${disc === 'clock' ? 'bg-blue-600' : 'bg-white/10 hover:bg-white/20'}`}>時鐘</button>
           <button onClick={() => setDiscSync('none')} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">關閉 Esc</button>
           <button onClick={() => {
             persist();
