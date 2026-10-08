@@ -1,4 +1,4 @@
-/* v3.1 驗收：#418、快取還原、角落圖示、CLOSE_CTRL、無舊文字 */
+﻿/* v3.1 驗收：#418、快取還原、角落圖示、CLOSE_CTRL、無舊文字 */
 const path = require('path');
 const { chromium } = require(path.join(__dirname, '..', '..', '.opencode', 'skills', 'transcript-correction', 'scripts', 'chateverywhere', 'node_modules', 'playwright-core'));
 
@@ -40,7 +40,7 @@ const FAKE_PAYLOAD = {
     await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
     await page.evaluate(({ p }) => {
       localStorage.setItem('vox-doc-url', 'https://docs.google.com/document/d/FAKE123/edit');
-      localStorage.setItem('vox-cache', JSON.stringify({ url: 'https://docs.google.com/document/d/FAKE123/edit', payload: p }));
+      localStorage.setItem('vox-cache-v2', JSON.stringify({ url: 'https://docs.google.com/document/d/FAKE123/edit', payload: p }));
       sessionStorage.setItem('vox-session', JSON.stringify({ stage: 'play', mode: 'presenter', idx: 0 }));
     }, { p: FAKE_PAYLOAD });
     let fetchDocHits = 0;
@@ -60,7 +60,7 @@ const FAKE_PAYLOAD = {
     await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
     await page.evaluate(({ p }) => {
       localStorage.setItem('vox-doc-url', 'https://docs.google.com/document/d/FAKE123/edit');
-      localStorage.setItem('vox-cache', JSON.stringify({ url: 'https://docs.google.com/document/d/FAKE123/edit', payload: p }));
+      localStorage.setItem('vox-cache-v2', JSON.stringify({ url: 'https://docs.google.com/document/d/FAKE123/edit', payload: p }));
       sessionStorage.setItem('vox-session', JSON.stringify({ stage: 'play', mode: 'presenter', idx: 0 }));
     }, { p: FAKE_PAYLOAD });
     // 模擬 controller 心跳
