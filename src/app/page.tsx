@@ -14,8 +14,8 @@ type SyncState = {
 type Payload = { content: string; lines: string[]; subs: string[]; starts: number[] };
 
 const MODE_META: Record<Mode, { title: string; desc: string; icon: string }> = {
-  reader: { title: '閱覽模式', desc: '研讀用。直向捲動閱讀、可調字級與版寬、底部音檔列。', icon: '📖' },
-  presenter: { title: '講師模式', desc: '投影用。講師背景圖＋毛玻璃字幕框，框寬高可調。', icon: '🖥️' },
+  reader: { title: '閱覽模式', desc: '研讀用。直向捲動閱讀、可調字級與版寬、底部音檔列。雙螢幕時控制端可翻頁同步捲動。', icon: '📖' },
+  presenter: { title: '講師模式', desc: '投影用。講師背景圖＋長條透明字幕框，框寬高與離底高度可調。', icon: '🖥️' },
   overlay: { title: '字幕模式', desc: '導播用。綠幕/黑幕單行字幕，約 13–18 字自動於標點斷行，位置高低可調。', icon: '🎞️' },
 };
 
@@ -73,6 +73,8 @@ export default function VoxReader() {
   const [overlayBg, setOverlayBg] = useState('#00FF00');
   // 離邊距離（%）：字幕位置微調，取代原本固定的 80/130px
   const [overlayOffset, setOverlayOffset] = useState(6);
+  // 講師模式字幕框離底距離（%）
+  const [presOffset, setPresOffset] = useState(5);
 
   // 播放
   const [content, setContent] = useState('');
@@ -178,11 +180,29 @@ export default function VoxReader() {
       }
       if (m.t === 'STATE') {
         const p = m.payload as SyncState;
+        const idxChanged = p.idx !== idxRef.current;
         idxRef.current = p.idx; subRef.current = p.sub; hideRef.current = p.hide;
         discRef.current = p.disc; cdRef.current = p.cd; nextRef.current = p.next;
         modeRef.current = p.mode;
         setIdx(p.idx); setSub(p.sub); setHide(p.hide);
         setDisc(p.disc); setCd(p.cd); setNextClass(p.next); setMode(p.mode);
+        // 閱覽模式：控制端跳句 → 投影端按比例捲動到文件對應位置
+        if (idxChanged && p.mode === 'reader') {
+          requestAnimationFrame(() => {
+            const el = document.getElementById('reader-scroll');
+            if (!el || linesLenRef.current < 2) return;
+            const frac = p.idx / (linesLenRef.current - 1);
+            el.scrollTo({ top: frac * (el.scrollHeight - el.clientHeight), behavior: 'smooth' });
+          });
+        }
+        return;
+      }
+      if (m.t === 'SCROLL') {
+        // 閱覽模式翻頁：控制端廣播，投影端實際捲動
+        if (role === 'display' && modeRef.current === 'reader') {
+          const el = document.getElementById('reader-scroll');
+          (el || window).scrollBy({ top: (m.dir === -1 ? -1 : 1) * window.innerHeight * 0.85, behavior: 'smooth' });
+        }
         return;
       }
       if (m.t === 'CLOSE_CTRL') {
@@ -244,6 +264,7 @@ export default function VoxReader() {
     setPresW(parseInt(localStorage.getItem('vox-pres-w') || '90'));
     setPresH(parseInt(localStorage.getItem('vox-pres-h') || '30'));
     setOverlayOffset(parseInt(localStorage.getItem('vox-overlay-offset') || '6'));
+    setPresOffset(parseInt(localStorage.getItem('vox-pres-offset') || '5'));
   }, []);
 
   // 控制端啟動：直接載入上次文件
@@ -402,6 +423,16 @@ export default function VoxReader() {
   const nextLine = () => gotoLine(idxRef.current + 1);
   const prevLine = () => gotoLine(idxRef.current - 1);
 
+  // 閱覽模式翻頁：display 本地捲動；controller 廣播給投影端
+  const scrollPage = (dir: number) => {
+    if (role === 'display') {
+      const el = document.getElementById('reader-scroll');
+      (el || window).scrollBy({ top: dir * window.innerHeight * 0.85, behavior: 'smooth' });
+    } else {
+      send({ t: 'SCROLL', dir });
+    }
+  };
+
   const gotoSub = (s: number) => {
     const starts = startsRef.current;
     const max = starts.length ? starts[starts.length - 1] + 100 : 0;
@@ -437,8 +468,15 @@ export default function VoxReader() {
 
   const applyAction = (a: string) => {
     if (stageRef.current !== 'play') return;
-    if (a === 'next') (modeRef.current === 'overlay' && stageRef.current === 'play') ? gotoSub(subRef.current + 1) : nextLine();
-    else if (a === 'prev') prevLine();
+    if (a === 'next') {
+      if (modeRef.current === 'reader') scrollPage(1);
+      else if (modeRef.current === 'overlay') gotoSub(subRef.current + 1);
+      else nextLine();
+    }
+    else if (a === 'prev') {
+      if (modeRef.current === 'reader') scrollPage(-1);
+      else prevLine();
+    }
     else if (a === 'black') toggleHide();
     else if (a === 'clock') setDiscSync('clock');
     else if (a === 'off') setDiscSync('none');
@@ -488,10 +526,10 @@ export default function VoxReader() {
       if (k === 'b' || k === 'B') { toggleHide(); return; }
       if (k === 'Escape') { setDiscSync('none'); return; }
       if (k === 'q' || k === 'Q') { setStage('mode'); return; }
-      if (modeRef.current === 'reader' && role === 'display') {
-        const el = document.getElementById('reader-scroll');
-        if (k === 'ArrowDown' || k === ' ') { e.preventDefault(); (el || window).scrollBy({ top: window.innerHeight * 0.8, behavior: 'smooth' }); }
-        if (k === 'ArrowUp') { e.preventDefault(); (el || window).scrollBy({ top: -window.innerHeight * 0.8, behavior: 'smooth' }); }
+      if (modeRef.current === 'reader') {
+        // 閱覽模式：方向鍵/空白鍵翻頁（display 本地捲動、controller 廣播）
+        if (k === 'ArrowDown' || k === ' ' || k === 'Enter') { e.preventDefault(); scrollPage(1); return; }
+        if (k === 'ArrowUp' || k === 'Backspace') { e.preventDefault(); scrollPage(-1); return; }
         return;
       }
       if (k === 'ArrowRight' || k === ' ' || k === 'Enter') { e.preventDefault(); modeRef.current === 'overlay' ? gotoSub(subRef.current + 1) : nextLine(); }
@@ -520,6 +558,7 @@ export default function VoxReader() {
     localStorage.setItem('vox-pres-w', String(presW));
     localStorage.setItem('vox-pres-h', String(presH));
     localStorage.setItem('vox-overlay-offset', String(overlayOffset));
+    localStorage.setItem('vox-pres-offset', String(presOffset));
   };
 
   // ===== 控制端控制列（Companion 對接說明） =====
@@ -532,7 +571,7 @@ export default function VoxReader() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[#f0f2f5] font-sans gap-8">
         <div className="text-center">
-          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro <span className="text-blue-500">v3.2</span></h1>
+          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro <span className="text-blue-500">v3.3</span></h1>
           <p className="text-slate-400 font-bold mt-2 text-sm">Step 1 / 2 — 選擇這次要用的模式</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
@@ -567,7 +606,7 @@ export default function VoxReader() {
           <div className="px-12 pt-10 pb-4">
             <button onClick={() => setStage('mode')} className="text-xs font-black text-slate-400 hover:text-blue-600">← Step 1 重選模式</button>
             <h1 className="text-3xl font-black text-slate-800 tracking-tighter italic mt-3">
-              {MODE_META[mode].title} <span className="text-blue-500 text-lg align-middle">v3.2</span>
+              {MODE_META[mode].title} <span className="text-blue-500 text-lg align-middle">v3.3</span>
             </h1>
             <p className="text-slate-400 font-bold mt-1 text-sm">Step 2 / 2 — 設定內容與版面</p>
           </div>
@@ -636,7 +675,7 @@ export default function VoxReader() {
 
               {mode === 'presenter' && (
                 <div className="space-y-3">
-                  <label className="text-[10px] font-bold text-slate-400">字幕框寬度 / 高度（播放中控制列也可即時調）</label>
+                  <label className="text-[10px] font-bold text-slate-400">字幕框寬度 / 高度 / 離底（播放中控制列也可即時調）</label>
                   <div className="flex items-center space-x-3">
                     <span className="text-xs text-slate-400 w-14">寬 {presW}%</span>
                     <input type="range" min="30" max="100" value={presW} onChange={e => setPresW(parseInt(e.target.value))} className="flex-1 accent-blue-600" />
@@ -644,6 +683,10 @@ export default function VoxReader() {
                   <div className="flex items-center space-x-3">
                     <span className="text-xs text-slate-400 w-14">高 {presH}%</span>
                     <input type="range" min="10" max="80" value={presH} onChange={e => setPresH(parseInt(e.target.value))} className="flex-1 accent-blue-400" />
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <span className="text-xs text-slate-400 w-14">離底 {presOffset}%</span>
+                    <input type="range" min="0" max="45" value={presOffset} onChange={e => setPresOffset(parseInt(e.target.value))} className="flex-1 accent-blue-400" />
                   </div>
                 </div>
               )}
@@ -688,7 +731,7 @@ export default function VoxReader() {
     return (
       <div className="min-h-screen bg-slate-900 text-white p-6 md:p-8 flex flex-col space-y-5 select-none font-sans">
         <div className="flex justify-between items-center">
-          <h1 className="text-xl font-black tracking-tighter italic">VOX <span className="text-blue-500">CONTROLLER</span> <span className="text-[9px] text-slate-600 ml-2">v3.2</span></h1>
+          <h1 className="text-xl font-black tracking-tighter italic">VOX <span className="text-blue-500">CONTROLLER</span> <span className="text-[9px] text-slate-600 ml-2">v3.3</span></h1>
           <div className="flex items-center space-x-6">
             {nextClass && (
               <div className="text-right">
@@ -718,8 +761,17 @@ export default function VoxReader() {
             </div>
 
             <div className="flex space-x-3">
-              <button onClick={prevLine} className="flex-1 p-6 bg-slate-800 rounded-[2rem] text-2xl hover:bg-slate-700 active:scale-95 transition">◀ 上一句</button>
-              <button onClick={() => mode === 'overlay' ? gotoSub(sub + 1) : nextLine()} className="flex-[2] p-6 bg-blue-600 rounded-[2rem] text-2xl font-black hover:bg-blue-500 active:scale-95 transition shadow-2xl shadow-blue-900/50">下一句 ▶</button>
+              {mode === 'reader' ? (
+                <>
+                  <button onClick={() => scrollPage(-1)} className="flex-1 p-6 bg-slate-800 rounded-[2rem] text-2xl hover:bg-slate-700 active:scale-95 transition">◀ 上一頁</button>
+                  <button onClick={() => scrollPage(1)} className="flex-[2] p-6 bg-blue-600 rounded-[2rem] text-2xl font-black hover:bg-blue-500 active:scale-95 transition shadow-2xl shadow-blue-900/50">下一頁 ▶</button>
+                </>
+              ) : (
+                <>
+                  <button onClick={prevLine} className="flex-1 p-6 bg-slate-800 rounded-[2rem] text-2xl hover:bg-slate-700 active:scale-95 transition">◀ 上一句</button>
+                  <button onClick={() => mode === 'overlay' ? gotoSub(sub + 1) : nextLine()} className="flex-[2] p-6 bg-blue-600 rounded-[2rem] text-2xl font-black hover:bg-blue-500 active:scale-95 transition shadow-2xl shadow-blue-900/50">下一句 ▶</button>
+                </>
+              )}
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -808,7 +860,7 @@ export default function VoxReader() {
             {bgImageUrl && <img src={bgImageUrl} className="absolute inset-0 w-full h-full object-cover z-0" alt="BG" />}
             <div className="absolute inset-0 bg-black/30 z-10" />
             <div className={`absolute z-20 transition-opacity duration-500 ${hide ? 'opacity-0' : 'opacity-100'}`}
-              style={{ width: `${presW}%`, height: `${presH}%`, left: '50%', transform: 'translateX(-50%)', bottom: barVisible ? '100px' : '5%' }}>
+              style={{ width: `${presW}%`, height: `${presH}%`, left: '50%', transform: 'translateX(-50%)', bottom: barVisible ? `calc(${presOffset}% + 40px)` : `${presOffset}%` }}>
               <div className="w-full h-full bg-black/60 backdrop-blur-3xl px-10 py-6 border-t border-b border-white/10 flex items-center justify-center shadow-[0_30px_100px_rgba(0,0,0,0.5)]">
                 <div className="text-white font-black text-center leading-tight" style={{ fontSize: `${fontSize * 2}px` }}>{lines[idx]}</div>
               </div>
@@ -850,6 +902,9 @@ export default function VoxReader() {
               <input type="range" min="30" max="100" value={presW} onChange={e => setPresW(parseInt(e.target.value))} className="w-16 accent-blue-500" />
               <span className="text-white/50">高</span>
               <input type="range" min="10" max="80" value={presH} onChange={e => setPresH(parseInt(e.target.value))} className="w-16 accent-blue-500" />
+              <span className="text-white/50">離底</span>
+              <input type="range" min="0" max="45" value={presOffset} onChange={e => setPresOffset(parseInt(e.target.value))} className="w-16 accent-blue-500" />
+              <span className="w-7 text-center tabular-nums">{presOffset}%</span>
             </div>
           )}
 
@@ -866,6 +921,13 @@ export default function VoxReader() {
               <span className="text-white/50">高低</span>
               <input type="range" min="0" max="45" value={overlayOffset} onChange={e => setOverlayOffset(parseInt(e.target.value))} className="w-20 accent-blue-500" />
               <span className="w-7 text-center tabular-nums">{overlayOffset}%</span>
+            </div>
+          )}
+
+          {mode === 'reader' && (
+            <div className="flex gap-1">
+              <button onClick={() => scrollPage(-1)} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">◀ 頁</button>
+              <button onClick={() => scrollPage(1)} className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500">頁 ▶</button>
             </div>
           )}
 
