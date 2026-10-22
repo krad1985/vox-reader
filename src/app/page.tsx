@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 type Mode = 'reader' | 'presenter' | 'overlay';
+type Role = 'display' | 'controller' | 'remote';
 type Disc = 'none' | 'clock' | 'countdown' | 'class';
 type Stage = 'mode' | 'setup' | 'play';
 
@@ -11,10 +12,11 @@ type SyncState = {
   cd: number | null; next: string; mode: Mode;
 };
 
-type Payload = { content: string; lines: string[]; subs: string[]; starts: number[] };
+type Chapter = { text: string; level: number; lineIdx: number };
+type Payload = { content: string; lines: string[]; subs: string[]; starts: number[]; chapters?: Chapter[] };
 
 const MODE_META: Record<Mode, { title: string; desc: string; icon: string }> = {
-  reader: { title: '閱覽模式', desc: '研讀用。直向捲動閱讀、可調字級與版寬、底部音檔列。雙螢幕時控制端可翻頁同步捲動。', icon: '📖' },
+  reader: { title: '閱覽模式', desc: '研讀用。直向捲動閱讀、可調字級與版寬、底部音檔列、自動章節目錄。雙螢幕時控制端可翻頁同步捲動。', icon: '📖' },
   presenter: { title: '講師模式', desc: '投影用。講師背景圖＋長條透明字幕框，框寬高與離底高度可調。', icon: '🖥️' },
   overlay: { title: '字幕模式', desc: '導播用。綠幕/黑幕單行字幕，約 13–18 字自動於標點斷行，位置高低可調。', icon: '🎞️' },
 };
@@ -53,10 +55,10 @@ const fmtCd = (s: number) => {
 };
 
 export default function VoxReader() {
-  // 角色：display（預設單螢幕） / controller（控制端，/?mode=controller）
+  // 角色：display（預設單螢幕） / controller（控制端，/?mode=controller） / remote（手機遙控，/?mode=remote）
   // 伺服器與首次渲染一律 display，掛載後才讀取 query —— 避免 SSR/CSR 不一致（React #418）
-  const [role, setRole] = useState<'display' | 'controller'>('display');
-  const roleRef = useRef<'display' | 'controller'>('display');
+  const [role, setRole] = useState<Role>('display');
+  const roleRef = useRef<Role>('display');
 
   const [stage, setStage] = useState<Stage>('mode');
   const [mode, setMode] = useState<Mode>('presenter');
@@ -75,6 +77,11 @@ export default function VoxReader() {
   const [overlayOffset, setOverlayOffset] = useState(6);
   // 講師模式字幕框離底距離（%）
   const [presOffset, setPresOffset] = useState(5);
+  // 章節目錄（H1–H3 自動提取）
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [tocOpen, setTocOpen] = useState(false);
+  // 黃帽：上次載入資訊（設定頁顯示）
+  const [lastLoad, setLastLoad] = useState<{ title: string; ts: number } | null>(null);
 
   // 播放
   const [content, setContent] = useState('');
@@ -152,6 +159,7 @@ export default function VoxReader() {
     idxRef.current = i;
     subRef.current = p.starts[i] ?? 0;
     setContent(p.content); setLines(p.lines); setSubs(p.subs);
+    setChapters(p.chapters || []);
     setIdx(i); setSub(subRef.current);
     setErrMsg('');
     setStage('play');
@@ -159,6 +167,7 @@ export default function VoxReader() {
 
   // ===== BroadcastChannel =====
   useEffect(() => {
+    if (role === 'remote') return; // 遙控器只發送不同步
     bc.current = new BroadcastChannel('vox_reader_v3');
     bc.current.onmessage = (ev) => {
       const m = ev.data;
@@ -172,6 +181,7 @@ export default function VoxReader() {
         startsRef.current = p.starts;
         linesLenRef.current = p.lines.length;
         setContent(p.content); setLines(p.lines); setSubs(p.subs);
+        setChapters(p.chapters || []);
         idxRef.current = Math.min(idxRef.current, p.lines.length - 1);
         subRef.current = startsRef.current[idxRef.current] ?? 0;
         setIdx(idxRef.current); setSub(subRef.current);
@@ -202,6 +212,19 @@ export default function VoxReader() {
         if (role === 'display' && modeRef.current === 'reader') {
           const el = document.getElementById('reader-scroll');
           (el || window).scrollBy({ top: (m.dir === -1 ? -1 : 1) * window.innerHeight * 0.85, behavior: 'smooth' });
+        }
+        return;
+      }
+      if (m.t === 'SCROLL_CH') {
+        // 章節跳轉：投影端直接 scrollIntoView（不走 STATE 比例捲動，避免互搶）
+        if (role === 'display') {
+          const ch = (contentRef.current.chapters || [])[m.ch];
+          document.getElementById(`vox-ch-${m.ch}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          if (ch && ch.lineIdx >= 0) {
+            idxRef.current = ch.lineIdx; subRef.current = startsRef.current[ch.lineIdx] ?? 0;
+            setIdx(idxRef.current); setSub(subRef.current);
+            sendState(); // 同步控制端 idx 顯示
+          }
         }
         return;
       }
@@ -265,6 +288,7 @@ export default function VoxReader() {
     setPresH(parseInt(localStorage.getItem('vox-pres-h') || '30'));
     setOverlayOffset(parseInt(localStorage.getItem('vox-overlay-offset') || '6'));
     setPresOffset(parseInt(localStorage.getItem('vox-pres-offset') || '5'));
+    try { setLastLoad(JSON.parse(localStorage.getItem('vox-last-load') || 'null')); } catch { /* corrupted */ }
   }, []);
 
   // 控制端啟動：直接載入上次文件
@@ -274,7 +298,14 @@ export default function VoxReader() {
     bootedRef.current = true;
 
     // 1) 角色：掛載後才讀 query（SSR 一律 display，避免 React #418）
-    const isCtrl = new URLSearchParams(window.location.search).get('mode') === 'controller';
+    const modeQ = new URLSearchParams(window.location.search).get('mode');
+    const isCtrl = modeQ === 'controller';
+    const isRemote = modeQ === 'remote';
+    if (isRemote) {
+      // 手機遙控：不還原 session、不載入文件，直接可用的按鈕面板
+      roleRef.current = 'remote'; setRole('remote'); setReady(true);
+      return;
+    }
     if (isCtrl) { roleRef.current = 'controller'; setRole('controller'); }
 
     // 2) 上次 session（stage / mode / idx）
@@ -350,10 +381,20 @@ export default function VoxReader() {
         || doc.body) as HTMLElement;
       if (!target) { failOrCache(url, '文件內容為空'); return; }
 
-      // 屬性消毒：移除危險/無關屬性，重新序列化（保證標籤封閉）
+      // 屬性消毒 + 章節標記：H1–H3 賦予穩定 id 並抽出目錄（在移除 id 之前）
+      const chaptersRaw: { text: string; level: number }[] = [];
       target.querySelectorAll('*').forEach(el => {
         const e = el as HTMLElement;
-        e.removeAttribute('style'); e.removeAttribute('class'); e.removeAttribute('id');
+        e.removeAttribute('style'); e.removeAttribute('class');
+        if (/^H[123]$/.test(e.tagName)) {
+          const t = (e.textContent || '').trim();
+          if (t.length > 1 && t.length < 100) {
+            e.id = `vox-ch-${chaptersRaw.length}`;
+            chaptersRaw.push({ text: t, level: parseInt(e.tagName[1], 10) });
+          } else e.removeAttribute('id');
+        } else {
+          e.removeAttribute('id');
+        }
         // 去掉 on* 事件屬性
         Array.from(e.attributes).forEach(a => { if (/^on/i.test(a.name)) e.removeAttribute(a.name); });
       });
@@ -388,10 +429,19 @@ export default function VoxReader() {
 
       const safeHtml = target.innerHTML; // DOMParser 已自動補閉合標籤
 
-      const payload: Payload = { content: safeHtml, lines: sentences, subs: flat, starts };
+      // 章節 → 句子索引（heading 文字本身就是獨立句子行）
+      const chapters: Chapter[] = chaptersRaw.map(c => ({ ...c, lineIdx: sentences.indexOf(c.text) }));
+
+      const payload: Payload = { content: safeHtml, lines: sentences, subs: flat, starts, chapters };
       writeCache(url, payload);
       applyPayload(payload, 0);
       setTimeout(sendContent, 50);
+      // 黃帽：記住上次載入（設定頁顯示）
+      try {
+        const info = { title: doc.title || url.slice(-60), ts: Date.now() };
+        localStorage.setItem('vox-last-load', JSON.stringify(info));
+        setLastLoad(info);
+      } catch { /* ignore */ }
     } catch {
       failOrCache(url, '載入發生例外，請檢查連結');
     } finally {
@@ -431,6 +481,32 @@ export default function VoxReader() {
     } else {
       send({ t: 'SCROLL', dir });
     }
+  };
+
+  // 章節跳轉：display 本地 scrollIntoView；controller 廣播 SCROLL_CH（避免與 STATE 比例捲動互搶）
+  const gotoChapter = (i: number) => {
+    const ch = (contentRef.current.chapters || [])[i];
+    if (!ch) return;
+    if (role === 'display') {
+      document.getElementById(`vox-ch-${i}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (ch.lineIdx >= 0) {
+        idxRef.current = ch.lineIdx; subRef.current = startsRef.current[ch.lineIdx] ?? 0;
+        setIdx(idxRef.current); setSub(subRef.current);
+        sendState();
+      }
+    } else {
+      send({ t: 'SCROLL_CH', ch: i });
+    }
+    setTocOpen(false);
+  };
+
+  // 手機遙控：僅 POST 指令，不輪詢、不消耗佇列（黑帽：避免與控制端雙重消耗）
+  const remoteSend = (action: string) => {
+    fetch('/api/ctrl', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'vox-reader', action }),
+    }).catch(() => { /* offline */ });
   };
 
   const gotoSub = (s: number) => {
@@ -503,7 +579,8 @@ export default function VoxReader() {
     let since = 0;
     const iv = setInterval(async () => {
       if (stageRef.current !== 'play') return;
-      const shouldPoll = role === 'controller' || !dualRef.current;
+      // 黑帽：遠端頁永不輪詢（只發送）；display 單螢幕才輪詢，避免與控制端雙重消耗
+      const shouldPoll = role === 'controller' || (role === 'display' && !dualRef.current);
       if (!shouldPoll) return;
       try {
         const r = await fetch(`/api/ctrl?key=vox-reader&since=${since}`);
@@ -571,7 +648,7 @@ export default function VoxReader() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[#f0f2f5] font-sans gap-8">
         <div className="text-center">
-          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro <span className="text-blue-500">v3.3</span></h1>
+          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro <span className="text-blue-500">v3.4</span></h1>
           <p className="text-slate-400 font-bold mt-2 text-sm">Step 1 / 2 — 選擇這次要用的模式</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
@@ -606,7 +683,7 @@ export default function VoxReader() {
           <div className="px-12 pt-10 pb-4">
             <button onClick={() => setStage('mode')} className="text-xs font-black text-slate-400 hover:text-blue-600">← Step 1 重選模式</button>
             <h1 className="text-3xl font-black text-slate-800 tracking-tighter italic mt-3">
-              {MODE_META[mode].title} <span className="text-blue-500 text-lg align-middle">v3.3</span>
+              {MODE_META[mode].title} <span className="text-blue-500 text-lg align-middle">v3.4</span>
             </h1>
             <p className="text-slate-400 font-bold mt-1 text-sm">Step 2 / 2 — 設定內容與版面</p>
           </div>
@@ -617,12 +694,19 @@ export default function VoxReader() {
                 <label className="text-[10px] font-black text-slate-400 uppercase">Google 文件連結 *</label>
                 <input type="text" value={docUrl} onChange={e => setDocUrl(e.target.value)} placeholder="https://docs.google.com/..."
                   className="w-full mt-1 p-4 bg-slate-50 rounded-2xl outline-none border-2 border-transparent focus:border-blue-500 text-slate-900 placeholder:text-slate-400" />
+                {lastLoad && (
+                  <p className="text-[11px] text-slate-400 mt-1 font-bold">
+                    上次載入：{lastLoad.title}（{new Date(lastLoad.ts).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}）
+                  </p>
+                )}
               </div>
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase">音檔連結（閱覽模式底部列）</label>
-                <input type="text" value={audioUrl} onChange={e => setAudioUrl(e.target.value)} placeholder="mp3 / Google Drive 連結"
-                  className="w-full mt-1 p-4 bg-slate-50 rounded-2xl outline-none text-slate-900 placeholder:text-slate-400" />
-              </div>
+              {mode === 'reader' && (
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase">音檔連結（底部音檔列）</label>
+                  <input type="text" value={audioUrl} onChange={e => setAudioUrl(e.target.value)} placeholder="mp3 / Google Drive 連結"
+                    className="w-full mt-1 p-4 bg-slate-50 rounded-2xl outline-none text-slate-900 placeholder:text-slate-400" />
+                </div>
+              )}
 
               {mode === 'presenter' && (
                 <div>
@@ -702,6 +786,7 @@ export default function VoxReader() {
 
               <div className="space-y-3 pt-2">
                 <button onClick={() => { persist(); loadDoc(docUrl); }} disabled={loading || !docUrl}
+                  title={!docUrl ? '請先貼上 Google 文件連結' : undefined}
                   className="w-full p-5 bg-blue-600 text-white rounded-3xl font-black hover:bg-blue-500 transition shadow-xl disabled:opacity-40">
                   {loading ? '載入中…' : role === 'controller' ? '載入並開啟控制端' : `開始（單螢幕，常駐控制列）`}
                 </button>
@@ -711,12 +796,17 @@ export default function VoxReader() {
                     window.open('/?mode=controller', '_blank');
                     loadDoc(docUrl);
                   }} disabled={loading || !docUrl}
+                    title={!docUrl ? '請先貼上 Google 文件連結' : undefined}
                     className="w-full p-5 bg-slate-800 text-white rounded-3xl font-black hover:bg-slate-700 transition disabled:opacity-40">
                     開始（雙螢幕：另開控制端視窗）
                   </button>
                 )}
+                {!docUrl && (
+                  <p className="text-xs text-amber-600 font-bold text-center">請先貼上 Google 文件連結，「開始」才會啟用。</p>
+                )}
                 <p className="text-[11px] text-slate-400 leading-relaxed">
                   單螢幕＝畫面底部常駐控制列，自己控制自己。雙螢幕＝同一台電腦開兩個視窗（控制端全螢幕外的另一螢），控制端按鈕會同步投影端；控制端一關，投影端自動回到單螢幕控制列。
+                  手機當遙控器：用手機開 <span className="font-mono">{typeof window !== 'undefined' ? window.location.origin : ''}/?mode=remote</span>（純按鈕遠端，透過網路控制，不佔電腦分頁）。
                 </p>
               </div>
             </div>
@@ -731,7 +821,7 @@ export default function VoxReader() {
     return (
       <div className="min-h-screen bg-slate-900 text-white p-6 md:p-8 flex flex-col space-y-5 select-none font-sans">
         <div className="flex justify-between items-center">
-          <h1 className="text-xl font-black tracking-tighter italic">VOX <span className="text-blue-500">CONTROLLER</span> <span className="text-[9px] text-slate-600 ml-2">v3.3</span></h1>
+          <h1 className="text-xl font-black tracking-tighter italic">VOX <span className="text-blue-500">CONTROLLER</span> <span className="text-[9px] text-slate-600 ml-2">v3.4</span></h1>
           <div className="flex items-center space-x-6">
             {nextClass && (
               <div className="text-right">
@@ -748,10 +838,13 @@ export default function VoxReader() {
           <div className="md:col-span-2 space-y-5 flex flex-col">
             <div className="bg-slate-800 p-6 rounded-[2rem] border border-slate-700">
               <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">
-                目前播放（{idx + 1}/{lines.length}｜字幕 {sub + 1}/{subs.length}）
+                目前播放（{mode === 'reader'
+                  ? `進度 ${lines.length ? Math.round(((idx + 1) / lines.length) * 100) : 0}%（第 ${idx + 1} 段／${lines.length}）`
+                  : `${idx + 1}/${lines.length}｜字幕 ${sub + 1}/${subs.length}`}
+                )
               </div>
               <div className="text-2xl font-bold mt-3 leading-relaxed">{lines[idx] || '---'}</div>
-              <div className="text-sm text-blue-400 mt-3 font-bold italic">下一句：{lines[idx + 1] || '（最後一句）'}</div>
+              <div className="text-sm text-blue-400 mt-3 font-bold italic">{mode === 'reader' ? '下一段' : '下一句'}：{lines[idx + 1] || '（最後一句）'}</div>
             </div>
 
             <div className="grid grid-cols-3 gap-3 text-center">
@@ -790,10 +883,25 @@ export default function VoxReader() {
                 ))}
               </div>
               <p className="mt-2 leading-relaxed">控制端開著時由控制端接收指令並同步投影端；只用單螢幕時由投影端自行接收。</p>
+              <p className="mt-2 leading-relaxed">手機遙控：開 <span className="font-mono">{typeof window !== 'undefined' ? window.location.origin : ''}/?mode=remote</span>（純發送按鈕，不消耗佇列，由控制端或單螢幕投影端接收執行）。</p>
             </details>
           </div>
 
           <div className="bg-slate-800 rounded-[2rem] overflow-hidden flex flex-col border border-slate-700 min-h-0">
+            {chapters.length > 0 && (
+              <div className="border-b border-slate-700">
+                <div className="px-4 py-2 bg-slate-700/50 text-[10px] font-bold uppercase tracking-widest text-slate-400">章節目錄（點擊跳轉）</div>
+                <div className="max-h-40 overflow-y-auto p-2 space-y-0.5">
+                  {chapters.map((c, i) => (
+                    <button key={i} onClick={() => gotoChapter(i)}
+                      className="w-full text-left px-2 py-1.5 rounded-lg text-[11px] hover:bg-slate-700 text-slate-400 truncate"
+                      style={{ paddingLeft: 8 + (c.level - 1) * 12 }}>
+                      {c.text}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="p-4 bg-slate-700 text-[10px] font-bold uppercase tracking-widest text-slate-400">句子清單（點擊跳轉）</div>
             <div className="flex-1 overflow-y-auto p-3 space-y-1">
               {lines.map((l, i) => (
@@ -802,6 +910,43 @@ export default function VoxReader() {
             </div>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // ===== Role: REMOTE — 手機遙控（/?mode=remote）=====
+  if (role === 'remote') {
+    return (
+      <div className="min-h-[100dvh] bg-slate-950 text-white p-4 flex flex-col gap-3 select-none font-sans">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-black tracking-tighter italic">VOX <span className="text-blue-500">REMOTE</span> <span className="text-[9px] text-slate-600 ml-1">v3.4</span></h1>
+          <span className="text-[10px] text-slate-600 font-bold">純遙控・不消耗佇列</span>
+        </div>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          用這支手機控制投影端：按鈕透過網路送出指令，由電腦端（單螢幕投影或控制端）接收執行。需保持網路連線。此頁不顯示目前播放狀態。
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => remoteSend('prev')} className="p-8 rounded-3xl bg-slate-800 text-2xl font-black active:scale-95 transition">◀ 上一句</button>
+          <button onClick={() => remoteSend('next')} className="p-8 rounded-3xl bg-blue-600 text-2xl font-black active:scale-95 transition">下一句 ▶</button>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => remoteSend('black')} className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">黑屏 B</button>
+          <button onClick={() => remoteSend('off')} className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">關閉覆蓋</button>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {(['presenter', 'overlay', 'reader'] as Mode[]).map(m => (
+            <button key={m} onClick={() => remoteSend(`mode:${m}`)} className="py-4 rounded-2xl bg-slate-800 text-xs font-black active:scale-95 transition">{MODE_META[m].title}</button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => { const v = prompt('研討倒數幾分鐘？', '10'); if (v && !isNaN(parseInt(v))) remoteSend(`countdown:${v}`); }}
+            className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">研討倒數</button>
+          <button onClick={() => { const v = prompt('下堂課時間（HH:MM）', '14:00'); if (v) remoteSend(`class:${v}`); }}
+            className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">上課提醒</button>
+        </div>
+        <p className="text-[10px] text-slate-600 text-center mt-auto leading-relaxed">
+          閱覽模式下「上一句／下一句」＝翻頁。指令由電腦端接收，手機可锁屏省電。
+        </p>
       </div>
     );
   }
@@ -843,6 +988,23 @@ export default function VoxReader() {
             )}
             {disc === 'clock' && <div className="text-[18vw] font-black text-white font-mono">{now}</div>}
           </div>
+        </div>
+      )}
+
+      {/* 章節目錄面板（閱覽模式） */}
+      {mode === 'reader' && tocOpen && (
+        <div className="fixed left-0 top-0 bottom-0 z-[80] w-72 max-w-[80vw] bg-black/90 backdrop-blur-md text-white flex flex-col">
+          <div className="p-4 text-[10px] font-bold uppercase tracking-widest text-slate-400 border-b border-white/10">章節目錄</div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+            {chapters.map((c, i) => (
+              <button key={i} onClick={() => gotoChapter(i)}
+                className="w-full text-left px-3 py-2 rounded-xl text-sm hover:bg-white/10 text-slate-300 truncate"
+                style={{ paddingLeft: 12 + (c.level - 1) * 14 }}>
+                {c.text}
+              </button>
+            ))}
+          </div>
+          <button onClick={() => setTocOpen(false)} className="p-4 text-xs font-bold text-slate-500 hover:text-white border-t border-white/10">關閉</button>
         </div>
       )}
 
@@ -932,6 +1094,9 @@ export default function VoxReader() {
 
           {mode === 'reader' && (
             <div className="flex gap-1">
+              {chapters.length > 0 && (
+                <button onClick={() => setTocOpen(o => !o)} className={`px-3 py-1.5 rounded-lg ${tocOpen ? 'bg-blue-600' : 'bg-white/10 hover:bg-white/20'}`}>目錄</button>
+              )}
               <button onClick={() => scrollPage(-1)} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">◀ 頁</button>
               <button onClick={() => scrollPage(1)} className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500">頁 ▶</button>
             </div>
