@@ -82,6 +82,8 @@ export default function VoxReader() {
   const [tocOpen, setTocOpen] = useState(false);
   // 黃帽：上次載入資訊（設定頁顯示）
   const [lastLoad, setLastLoad] = useState<{ title: string; ts: number } | null>(null);
+  // 遠端頁：送出回饋
+  const [remoteMsg, setRemoteMsg] = useState('');
 
   // 播放
   const [content, setContent] = useState('');
@@ -500,13 +502,19 @@ export default function VoxReader() {
     setTocOpen(false);
   };
 
-  // 手機遙控：僅 POST 指令，不輪詢、不消耗佇列（黑帽：避免與控制端雙重消耗）
+  // 手機遙控：POST 重試 3 次（伺服器無狀態保證，提高命中輪詢實例的機率）；uid 供接收端去重
   const remoteSend = (action: string) => {
-    fetch('/api/ctrl', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: 'vox-reader', action }),
-    }).catch(() => { /* offline */ });
+    const uid = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const body = JSON.stringify({ key: 'vox-reader', action, uid });
+    let tries = 0;
+    const fire = () => {
+      tries += 1;
+      fetch('/api/ctrl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+        .catch(() => { /* offline */ })
+        .finally(() => { if (tries < 3) setTimeout(fire, 400); });
+    };
+    fire();
+    setRemoteMsg(`已送出「${action}」 ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
   };
 
   const gotoSub = (s: number) => {
@@ -525,6 +533,12 @@ export default function VoxReader() {
     const v = !hideRef.current; hideRef.current = v; setHide(v); sendState({ hide: v });
   };
   const setDiscSync = (d: Disc) => { discRef.current = d; setDisc(d); sendState({ disc: d }); };
+  // 關閉覆蓋（Esc/結束倒數）：一併清除倒數，避免背景持續跳秒
+  const clearDisc = () => {
+    discRef.current = 'none'; cdRef.current = null;
+    setDisc('none'); setCd(null);
+    sendState({ disc: 'none', cd: null });
+  };
   const startCountdown = () => {
     const m = prompt('研討倒數幾分鐘？', '10');
     if (!m || isNaN(parseInt(m))) return;
@@ -555,7 +569,7 @@ export default function VoxReader() {
     }
     else if (a === 'black') toggleHide();
     else if (a === 'clock') setDiscSync('clock');
-    else if (a === 'off') setDiscSync('none');
+    else if (a === 'off') clearDisc();
     else if (a.startsWith('countdown:')) {
       const sec = parseInt(a.split(':')[1]) * 60;
       if (!isNaN(sec)) { cdRef.current = sec; setCd(sec); discRef.current = 'countdown'; setDisc('countdown'); sendState({ cd: sec, disc: 'countdown' }); }
@@ -576,8 +590,18 @@ export default function VoxReader() {
   // ===== Bitfocus Companion 指令輪詢 =====
   // controller 永遠輪詢；display 僅在單螢幕（無 controller）時輪詢，避免重複執行
   useEffect(() => {
-    let since = 0;
+    let since = -1; // -1 = 尚未對齊序號
+    const seen = new Set<string>();
+    // 掛載時先探測目前序號，只接收新指令（避免重播上一個 session 的舊指令）
+    (async () => {
+      try {
+        const r = await fetch('/api/ctrl?key=vox-reader&probe=1');
+        const d = await r.json();
+        since = typeof d.last === 'number' ? d.last : 0;
+      } catch { since = 0; }
+    })();
     const iv = setInterval(async () => {
+      if (since < 0) return; // 尚未完成序號對齊
       if (stageRef.current !== 'play') return;
       // 黑帽：遠端頁永不輪詢（只發送）；display 單螢幕才輪詢，避免與控制端雙重消耗
       const shouldPoll = role === 'controller' || (role === 'display' && !dualRef.current);
@@ -586,12 +610,18 @@ export default function VoxReader() {
         const r = await fetch(`/api/ctrl?key=vox-reader&since=${since}`);
         if (!r.ok) return;
         const d = await r.json();
-        (d.acts || []).forEach((a: { id: number; action: string }) => {
+        (d.acts || []).forEach((a: { id: number; action: string; uid?: string }) => {
           since = Math.max(since, a.id);
+          // 遠端重試會產生同 uid 多筆，只執行一次
+          if (a.uid) {
+            if (seen.has(a.uid)) return;
+            seen.add(a.uid);
+            if (seen.size > 300) seen.clear();
+          }
           applyRef.current(a.action);
         });
       } catch { /* network hiccup */ }
-    }, 700);
+    }, 600);
     return () => clearInterval(iv);
   }, [role]);
 
@@ -601,7 +631,7 @@ export default function VoxReader() {
       if (stageRef.current !== 'play') return;
       const k = e.key;
       if (k === 'b' || k === 'B') { toggleHide(); return; }
-      if (k === 'Escape') { setDiscSync('none'); return; }
+      if (k === 'Escape') { clearDisc(); return; }
       if (k === 'q' || k === 'Q') { setStage('mode'); return; }
       if (modeRef.current === 'reader') {
         // 閱覽模式：方向鍵/空白鍵翻頁（display 本地捲動、controller 廣播）
@@ -648,12 +678,15 @@ export default function VoxReader() {
     return (
       <div className="min-h-[100dvh] bg-slate-950 text-white p-4 flex flex-col gap-3 select-none font-sans">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-black tracking-tighter italic">VOX <span className="text-blue-500">REMOTE</span> <span className="text-[9px] text-slate-600 ml-1">v3.4</span></h1>
+          <h1 className="text-lg font-black tracking-tighter italic">VOX <span className="text-blue-500">REMOTE</span> <span className="text-[9px] text-slate-600 ml-1">v3.5</span></h1>
           <span className="text-[10px] text-slate-600 font-bold">純遙控・不消耗佇列</span>
         </div>
         <p className="text-[11px] text-slate-500 leading-relaxed">
-          用這支手機控制投影端：按鈕透過網路送出指令，由電腦端（單螢幕投影或控制端）接收執行。需保持網路連線。此頁不顯示目前播放狀態。
+          使用順序：1) 電腦端先按「開始」進入播放（單螢幕，或雙螢幕的控制端任一在線）2) 再按本頁按鈕。指令透過網路送出，需保持連線。
         </p>
+        {remoteMsg && (
+          <p className="text-[11px] text-emerald-400 font-bold font-mono">{remoteMsg}</p>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <button onClick={() => remoteSend('prev')} className="p-8 rounded-3xl bg-slate-800 text-2xl font-black active:scale-95 transition">◀ 上一句</button>
           <button onClick={() => remoteSend('next')} className="p-8 rounded-3xl bg-blue-600 text-2xl font-black active:scale-95 transition">下一句 ▶</button>
@@ -685,7 +718,7 @@ export default function VoxReader() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-[#f0f2f5] font-sans gap-8">
         <div className="text-center">
-          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro <span className="text-blue-500">v3.4</span></h1>
+          <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic">VoxReader Pro <span className="text-blue-500">v3.5</span></h1>
           <p className="text-slate-400 font-bold mt-2 text-sm">Step 1 / 2 — 選擇這次要用的模式</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
@@ -720,7 +753,7 @@ export default function VoxReader() {
           <div className="px-12 pt-10 pb-4">
             <button onClick={() => setStage('mode')} className="text-xs font-black text-slate-400 hover:text-blue-600">← Step 1 重選模式</button>
             <h1 className="text-3xl font-black text-slate-800 tracking-tighter italic mt-3">
-              {MODE_META[mode].title} <span className="text-blue-500 text-lg align-middle">v3.4</span>
+              {MODE_META[mode].title} <span className="text-blue-500 text-lg align-middle">v3.5</span>
             </h1>
             <p className="text-slate-400 font-bold mt-1 text-sm">Step 2 / 2 — 設定內容與版面</p>
           </div>
@@ -858,7 +891,7 @@ export default function VoxReader() {
     return (
       <div className="min-h-screen bg-slate-900 text-white p-6 md:p-8 flex flex-col space-y-5 select-none font-sans">
         <div className="flex justify-between items-center">
-          <h1 className="text-xl font-black tracking-tighter italic">VOX <span className="text-blue-500">CONTROLLER</span> <span className="text-[9px] text-slate-600 ml-2">v3.4</span></h1>
+          <h1 className="text-xl font-black tracking-tighter italic">VOX <span className="text-blue-500">CONTROLLER</span> <span className="text-[9px] text-slate-600 ml-2">v3.5</span></h1>
           <div className="flex items-center space-x-6">
             {nextClass && (
               <div className="text-right">
@@ -886,7 +919,7 @@ export default function VoxReader() {
 
             <div className="grid grid-cols-3 gap-3 text-center">
               <button onClick={toggleHide} className={`p-5 rounded-3xl font-black ${hide ? 'bg-red-600' : 'bg-slate-800 hover:bg-slate-700'}`}>黑屏<span className="block text-[9px] opacity-50">B</span></button>
-              <button onClick={startCountdown} className={`p-5 rounded-3xl font-black ${disc === 'countdown' ? 'bg-blue-600' : 'bg-slate-800 hover:bg-slate-700'}`}>研討倒數{cd !== null && cd > 0 && <span className="block text-[11px] text-blue-300">{fmtCd(cd)}</span>}</button>
+              <button onClick={startCountdown} className={`p-5 rounded-3xl font-black ${disc === 'countdown' ? 'bg-blue-600' : 'bg-slate-800 hover:bg-slate-700'}`}>研討倒數{disc === 'countdown' && cd !== null && cd > 0 && <span className="block text-[11px] text-blue-300">{fmtCd(cd)}</span>}</button>
               <button onClick={setClassSync} className={`p-5 rounded-3xl font-black ${disc === 'class' ? 'bg-blue-600' : 'bg-slate-800 hover:bg-slate-700'}`}>上課提醒{nextClass && <span className="block text-[11px] text-blue-300">{nextClass}</span>}</button>
             </div>
 
@@ -908,7 +941,7 @@ export default function VoxReader() {
               {(['presenter', 'overlay', 'reader'] as Mode[]).map(m => (
                 <button key={m} onClick={() => switchMode(m)} className={`px-4 py-2 rounded-xl text-xs font-black ${mode === m ? 'bg-blue-600' : 'bg-slate-800 hover:bg-slate-700'}`}>{MODE_META[m].title}</button>
               ))}
-              <button onClick={() => setDiscSync('none')} className="px-4 py-2 rounded-xl text-xs font-black bg-slate-800 hover:bg-slate-700">關閉覆蓋 Esc</button>
+              <button onClick={clearDisc} className="px-4 py-2 rounded-xl text-xs font-black bg-slate-800 hover:bg-slate-700">關閉覆蓋 Esc</button>
             </div>
 
             <details className="bg-slate-800/60 rounded-2xl p-4 text-[11px] text-slate-400">
@@ -1041,6 +1074,9 @@ export default function VoxReader() {
         )}
       </div>
 
+      {/* 黑屏：全畫面純黑（控制列 z-50 與角落圖示 z-60 仍在黑幕之上可操作） */}
+      {hide && <div id="vox-black" className="fixed inset-0 bg-black z-[45] pointer-events-none" />}
+
       {/* 常駐控制列（單螢幕）/ 雙螢幕時滑鼠移到底部浮出 */}
       <div className={`shrink-0 z-50 bg-black/90 backdrop-blur-md text-white border-t border-white/10 transition-all duration-300 ${barVisible ? '' : 'opacity-0 hover:opacity-100 focus-within:opacity-100'}`}>
         <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-2 text-[11px] font-bold">
@@ -1112,7 +1148,7 @@ export default function VoxReader() {
           <button onClick={toggleHide} className={`px-3 py-1.5 rounded-lg ${hide ? 'bg-red-600' : 'bg-white/10 hover:bg-white/20'}`}>黑屏 B</button>
           <button onClick={startCountdown} className={`px-3 py-1.5 rounded-lg ${disc === 'countdown' ? 'bg-blue-600' : 'bg-white/10 hover:bg-white/20'}`}>倒數</button>
           <button onClick={setClassSync} className={`px-3 py-1.5 rounded-lg ${disc === 'class' ? 'bg-blue-600' : 'bg-white/10 hover:bg-white/20'}`}>上課</button>
-          <button onClick={() => setDiscSync('none')} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">關閉 Esc</button>
+          <button onClick={clearDisc} className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">關閉 Esc</button>
           <button onClick={() => {
             persist();
             setDualOff(false); dualOffRef.current = false;
@@ -1151,3 +1187,4 @@ export default function VoxReader() {
     </div>
   );
 }
+
