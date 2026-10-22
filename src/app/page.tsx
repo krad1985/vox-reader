@@ -903,7 +903,10 @@ export default function VoxReader() {
               <span className="text-white/50">高</span>
               <input type="range" min="10" max="80" value={presH} onChange={e => setPresH(parseInt(e.target.value))} className="w-16 accent-blue-500" />
               <span className="text-white/50">離底</span>
-              <input type="range" min="0" max="45" value={presOffset} onChange={e => setPresOffset(parseInt(e.target.value))} className="w-16 accent-blue-500" />
+              <input type="range" min="0" max="45" value={presOffset} onChange={e => {
+                const v = parseInt(e.target.value); setPresOffset(v);
+                localStorage.setItem('vox-pres-offset', String(v));
+              }} className="w-16 accent-blue-500" />
               <span className="w-7 text-center tabular-nums">{presOffset}%</span>
             </div>
           )}
@@ -919,7 +922,10 @@ export default function VoxReader() {
             <div className="flex items-center gap-2 bg-white/10 rounded-lg px-3">
               <button onClick={() => setOverlayPos(p => p === 'bottom' ? 'top' : 'bottom')} className="px-2 py-1.5 rounded-lg bg-white/10 hover:bg-white/20">字幕{overlayPos === 'bottom' ? '置底' : '置頂'}</button>
               <span className="text-white/50">高低</span>
-              <input type="range" min="0" max="45" value={overlayOffset} onChange={e => setOverlayOffset(parseInt(e.target.value))} className="w-20 accent-blue-500" />
+              <input type="range" min="0" max="45" value={overlayOffset} onChange={e => {
+                const v = parseInt(e.target.value); setOverlayOffset(v);
+                localStorage.setItem('vox-overlay-offset', String(v));
+              }} className="w-20 accent-blue-500" />
               <span className="w-7 text-center tabular-nums">{overlayOffset}%</span>
             </div>
           )}
