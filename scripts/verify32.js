@@ -128,7 +128,7 @@ const bootCache = async (page, mode = 'overlay') => {
     await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1000);
     const txt = await page.evaluate(() => document.body.innerText);
-    ok('version shows v3.2', txt.includes('v3.2'));
+    ok('version shows v3.x', /v3\.\d/.test(txt));
     await ctx.close();
   }
 

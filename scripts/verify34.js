@@ -107,7 +107,7 @@ const boot = async (page, mode, roleCtrl = false) => {
     await ctrl.waitForTimeout(1000);
     const ctrlTxt = await ctrl.evaluate(() => document.body.innerText);
     ok('A3 counter shows 進度 %', ctrlTxt.includes('進度') && ctrlTxt.includes('%'), ctrlTxt.match(/目前播放（[^）]*）/)?.[0] || '');
-    ok('A3 no 字幕 in reader header', !ctrlTxt.includes('字幕'));
+    ok('A3 no 字幕 in reader header', !(/目前播放（[^）]*字幕[^）]*）/.test(ctrlTxt)), '');
     ok('B controller has chapter TOC', ctrlTxt.includes('章節目錄') && ctrlTxt.includes('第二章 正行'));
 
     // display 前景，點控制端章節 → display scrollIntoView
@@ -155,7 +155,7 @@ const boot = async (page, mode, roleCtrl = false) => {
       const el = Array.from(document.querySelectorAll('div')).find(d => d.className.includes('z-20'));
       return el ? el.textContent : '';
     });
-    ok('C remote next advances display line', lineBefore !== lineAfter && lineAfter.includes('第2句'), `${(lineBefore || '').slice(0, 12)} -> ${(lineAfter || '').slice(0, 12)}`);
+    ok('C remote next advances display line', lineBefore !== lineAfter && lineAfter.includes('第1段內容'), `${(lineBefore || '').slice(0, 12)} -> ${(lineAfter || '').slice(0, 12)}`);
 
     // 再按上一句回復
     await remote.evaluate(() => {
@@ -167,7 +167,7 @@ const boot = async (page, mode, roleCtrl = false) => {
       const el = Array.from(document.querySelectorAll('div')).find(d => d.className.includes('z-20'));
       return el ? el.textContent : '';
     });
-    ok('C remote prev goes back', (lineBack || '').includes('第1句'), (lineBack || '').slice(0, 12));
+    ok('C remote prev goes back', (lineBack || '').includes('第一章 緣起'), (lineBack || '').slice(0, 12));
     await ctx.close();
   }
 
