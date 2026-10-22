@@ -643,6 +643,43 @@ export default function VoxReader() {
 
   // ================= 渲染 =================
 
+  // ===== Role: REMOTE — 手機遙控（/?mode=remote），須在 stage 判斷之前 =====
+  if (role === 'remote') {
+    return (
+      <div className="min-h-[100dvh] bg-slate-950 text-white p-4 flex flex-col gap-3 select-none font-sans">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-black tracking-tighter italic">VOX <span className="text-blue-500">REMOTE</span> <span className="text-[9px] text-slate-600 ml-1">v3.4</span></h1>
+          <span className="text-[10px] text-slate-600 font-bold">純遙控・不消耗佇列</span>
+        </div>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          用這支手機控制投影端：按鈕透過網路送出指令，由電腦端（單螢幕投影或控制端）接收執行。需保持網路連線。此頁不顯示目前播放狀態。
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => remoteSend('prev')} className="p-8 rounded-3xl bg-slate-800 text-2xl font-black active:scale-95 transition">◀ 上一句</button>
+          <button onClick={() => remoteSend('next')} className="p-8 rounded-3xl bg-blue-600 text-2xl font-black active:scale-95 transition">下一句 ▶</button>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => remoteSend('black')} className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">黑屏 B</button>
+          <button onClick={() => remoteSend('off')} className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">關閉覆蓋</button>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {(['presenter', 'overlay', 'reader'] as Mode[]).map(m => (
+            <button key={m} onClick={() => remoteSend(`mode:${m}`)} className="py-4 rounded-2xl bg-slate-800 text-xs font-black active:scale-95 transition">{MODE_META[m].title}</button>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <button onClick={() => { const v = prompt('研討倒數幾分鐘？', '10'); if (v && !isNaN(parseInt(v))) remoteSend(`countdown:${v}`); }}
+            className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">研討倒數</button>
+          <button onClick={() => { const v = prompt('下堂課時間（HH:MM）', '14:00'); if (v) remoteSend(`class:${v}`); }}
+            className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">上課提醒</button>
+        </div>
+        <p className="text-[10px] text-slate-600 text-center mt-auto leading-relaxed">
+          閱覽模式下「上一句／下一句」＝翻頁。指令由電腦端接收，手機可锁屏省電。
+        </p>
+      </div>
+    );
+  }
+
   // --- Stage: MODE（先選模式） ---
   if (stage === 'mode') {
     return (
@@ -910,43 +947,6 @@ export default function VoxReader() {
             </div>
           </div>
         </div>
-      </div>
-    );
-  }
-
-  // ===== Role: REMOTE — 手機遙控（/?mode=remote）=====
-  if (role === 'remote') {
-    return (
-      <div className="min-h-[100dvh] bg-slate-950 text-white p-4 flex flex-col gap-3 select-none font-sans">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-black tracking-tighter italic">VOX <span className="text-blue-500">REMOTE</span> <span className="text-[9px] text-slate-600 ml-1">v3.4</span></h1>
-          <span className="text-[10px] text-slate-600 font-bold">純遙控・不消耗佇列</span>
-        </div>
-        <p className="text-[11px] text-slate-500 leading-relaxed">
-          用這支手機控制投影端：按鈕透過網路送出指令，由電腦端（單螢幕投影或控制端）接收執行。需保持網路連線。此頁不顯示目前播放狀態。
-        </p>
-        <div className="grid grid-cols-2 gap-3">
-          <button onClick={() => remoteSend('prev')} className="p-8 rounded-3xl bg-slate-800 text-2xl font-black active:scale-95 transition">◀ 上一句</button>
-          <button onClick={() => remoteSend('next')} className="p-8 rounded-3xl bg-blue-600 text-2xl font-black active:scale-95 transition">下一句 ▶</button>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <button onClick={() => remoteSend('black')} className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">黑屏 B</button>
-          <button onClick={() => remoteSend('off')} className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">關閉覆蓋</button>
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          {(['presenter', 'overlay', 'reader'] as Mode[]).map(m => (
-            <button key={m} onClick={() => remoteSend(`mode:${m}`)} className="py-4 rounded-2xl bg-slate-800 text-xs font-black active:scale-95 transition">{MODE_META[m].title}</button>
-          ))}
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <button onClick={() => { const v = prompt('研討倒數幾分鐘？', '10'); if (v && !isNaN(parseInt(v))) remoteSend(`countdown:${v}`); }}
-            className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">研討倒數</button>
-          <button onClick={() => { const v = prompt('下堂課時間（HH:MM）', '14:00'); if (v) remoteSend(`class:${v}`); }}
-            className="p-5 rounded-3xl bg-slate-800 font-black active:scale-95 transition">上課提醒</button>
-        </div>
-        <p className="text-[10px] text-slate-600 text-center mt-auto leading-relaxed">
-          閱覽模式下「上一句／下一句」＝翻頁。指令由電腦端接收，手機可锁屏省電。
-        </p>
       </div>
     );
   }
